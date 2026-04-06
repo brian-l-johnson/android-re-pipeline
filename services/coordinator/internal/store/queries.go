@@ -80,6 +80,23 @@ func (s *Store) UpdateJobStatus(ctx context.Context, jobID uuid.UUID, status str
 	return nil
 }
 
+// UpdateJobPackageInfo backfills package_name and version on the jobs row from
+// parsed apktool metadata. Only updates fields that are currently empty.
+func (s *Store) UpdateJobPackageInfo(ctx context.Context, jobID uuid.UUID, packageName, version string) error {
+	_, err := s.pool.Exec(ctx, `
+		UPDATE jobs
+		SET
+			package_name = CASE WHEN package_name = '' OR package_name IS NULL THEN $2 ELSE package_name END,
+			version      = CASE WHEN version      = '' OR version      IS NULL THEN $3 ELSE version      END
+		WHERE id = $1`,
+		jobID, packageName, version,
+	)
+	if err != nil {
+		return fmt.Errorf("update job package info: %w", err)
+	}
+	return nil
+}
+
 // UpdateJobToolStatus updates jadx_status, apktool_status, or mobsf_status for a job.
 func (s *Store) UpdateJobToolStatus(ctx context.Context, jobID uuid.UUID, tool string, status string) error {
 	var col string

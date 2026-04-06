@@ -195,6 +195,14 @@ func (o *Orchestrator) runMetadataParsing(ctx context.Context, jobID uuid.UUID) 
 	if err := o.store.InsertAPKMetadata(ctx, meta); err != nil {
 		log.Printf("orchestrator: insert apk metadata failed for job %s: %v", jobID, err)
 	}
+
+	// Backfill package_name / version onto the jobs row so the list API and
+	// UI can display them without a separate apk_metadata join.
+	if parsed.PackageName != "" || parsed.Version != "" {
+		if err := o.store.UpdateJobPackageInfo(ctx, jobID, parsed.PackageName, parsed.Version); err != nil {
+			log.Printf("orchestrator: update job package info failed for job %s: %v", jobID, err)
+		}
+	}
 }
 
 func (o *Orchestrator) runMobSF(jobID uuid.UUID, apkPath string) {
