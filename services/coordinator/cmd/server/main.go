@@ -133,7 +133,7 @@ func main() {
 	h := api.NewHandler(s, dataDir)
 	mux := http.NewServeMux()
 	h.RegisterRoutes(mux)
-	mux.Handle("/swagger/", httpSwagger.WrapHandler)
+	mux.Handle("GET /swagger/", httpSwagger.WrapHandler)
 
 	// Serve the web UI from the embedded static directory.
 	// Strip the "static/" prefix so index.html is served at /.
