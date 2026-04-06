@@ -42,7 +42,7 @@ echo "Starting jadx decompilation..."
 echo "  APK:    $APK"
 echo "  Output: $OUTPUT"
 
-/opt/jadx/bin/jadx --decompile-all --output-dir "$OUTPUT" "$APK"
+/opt/jadx/bin/jadx --output-dir "$OUTPUT" "$APK"
 JADX_EXIT=$?
 
 if [ $JADX_EXIT -eq 0 ]; then

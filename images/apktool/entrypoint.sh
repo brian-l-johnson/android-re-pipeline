@@ -42,5 +42,5 @@ echo "Starting apktool decode..."
 echo "  APK:    $APK"
 echo "  Output: $OUTPUT"
 
-java -jar /opt/apktool.jar d -f -o "$OUTPUT" "$APK"
+java -jar /opt/apktool.jar d -f --frame-path /tmp/apktool-framework -o "$OUTPUT" "$APK"
 exit $?
