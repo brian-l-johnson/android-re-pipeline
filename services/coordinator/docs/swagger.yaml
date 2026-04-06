@@ -1,5 +1,45 @@
 basePath: /
 definitions:
+  api.JobSummary:
+    properties:
+      apktool_status:
+        type: string
+      completed_at:
+        type: string
+      error:
+        type: string
+      jadx_status:
+        type: string
+      job_id:
+        type: string
+      mobsf_status:
+        type: string
+      package_name:
+        type: string
+      sha256:
+        type: string
+      source:
+        type: string
+      status:
+        type: string
+      submitted_at:
+        type: string
+      version:
+        type: string
+    type: object
+  api.ListJobsResponse:
+    properties:
+      jobs:
+        items:
+          $ref: '#/definitions/api.JobSummary'
+        type: array
+      limit:
+        type: integer
+      offset:
+        type: integer
+      total:
+        type: integer
+    type: object
   api.MetaInfo:
     properties:
       activities:
@@ -151,6 +191,35 @@ paths:
       summary: Health check
       tags:
       - system
+  /jobs:
+    get:
+      description: Returns a paginated list of analysis jobs ordered by submission
+        time descending
+      parameters:
+      - description: Maximum number of results (default 50, max 200)
+        in: query
+        name: limit
+        type: integer
+      - description: Pagination offset (default 0)
+        in: query
+        name: offset
+        type: integer
+      produces:
+      - application/json
+      responses:
+        "200":
+          description: OK
+          schema:
+            $ref: '#/definitions/api.ListJobsResponse'
+        "500":
+          description: error
+          schema:
+            additionalProperties:
+              type: string
+            type: object
+      summary: List all jobs
+      tags:
+      - jobs
   /results/{job_id}:
     get:
       description: Returns analysis results for a completed job, including tool outputs
@@ -193,6 +262,54 @@ paths:
               type: string
             type: object
       summary: Get job results
+      tags:
+      - jobs
+  /results/{job_id}/download:
+    get:
+      description: Streams the complete output directory for a completed job as a
+        zip (default) or tar.gz archive
+      parameters:
+      - description: Job UUID
+        in: path
+        name: job_id
+        required: true
+        type: string
+      - description: 'Archive format: zip (default) or tar.gz'
+        in: query
+        name: format
+        type: string
+      produces:
+      - application/zip
+      responses:
+        "200":
+          description: Archive file
+          schema:
+            type: file
+        "400":
+          description: invalid job_id or format
+          schema:
+            additionalProperties:
+              type: string
+            type: object
+        "404":
+          description: job not found or no results
+          schema:
+            additionalProperties:
+              type: string
+            type: object
+        "409":
+          description: job not complete
+          schema:
+            additionalProperties:
+              type: string
+            type: object
+        "500":
+          description: error
+          schema:
+            additionalProperties:
+              type: string
+            type: object
+      summary: Download job results as archive
       tags:
       - jobs
   /results/{job_id}/file:

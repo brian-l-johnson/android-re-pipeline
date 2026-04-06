@@ -24,6 +24,13 @@ jobs:
           go-version: "1.26"
           cache-dependency-path: services/coordinator/go.sum
 
+      - name: Install swag
+        run: go install github.com/swaggo/swag/cmd/swag@latest
+
+      - name: Generate swagger docs
+        working-directory: services/coordinator
+        run: swag init -g cmd/server/main.go --output docs
+
       - name: Run tests
         working-directory: services/coordinator
         run: go test ./...

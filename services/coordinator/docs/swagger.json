@@ -31,6 +31,49 @@
                 }
             }
         },
+        "/jobs": {
+            "get": {
+                "description": "Returns a paginated list of analysis jobs ordered by submission time descending",
+                "produces": [
+                    "application/json"
+                ],
+                "tags": [
+                    "jobs"
+                ],
+                "summary": "List all jobs",
+                "parameters": [
+                    {
+                        "type": "integer",
+                        "description": "Maximum number of results (default 50, max 200)",
+                        "name": "limit",
+                        "in": "query"
+                    },
+                    {
+                        "type": "integer",
+                        "description": "Pagination offset (default 0)",
+                        "name": "offset",
+                        "in": "query"
+                    }
+                ],
+                "responses": {
+                    "200": {
+                        "description": "OK",
+                        "schema": {
+                            "$ref": "#/definitions/api.ListJobsResponse"
+                        }
+                    },
+                    "500": {
+                        "description": "error",
+                        "schema": {
+                            "type": "object",
+                            "additionalProperties": {
+                                "type": "string"
+                            }
+                        }
+                    }
+                }
+            }
+        },
         "/results/{job_id}": {
             "get": {
                 "description": "Returns analysis results for a completed job, including tool outputs and APK metadata",
@@ -68,6 +111,77 @@
                     },
                     "404": {
                         "description": "job not found",
+                        "schema": {
+                            "type": "object",
+                            "additionalProperties": {
+                                "type": "string"
+                            }
+                        }
+                    },
+                    "409": {
+                        "description": "job not complete",
+                        "schema": {
+                            "type": "object",
+                            "additionalProperties": {
+                                "type": "string"
+                            }
+                        }
+                    },
+                    "500": {
+                        "description": "error",
+                        "schema": {
+                            "type": "object",
+                            "additionalProperties": {
+                                "type": "string"
+                            }
+                        }
+                    }
+                }
+            }
+        },
+        "/results/{job_id}/download": {
+            "get": {
+                "description": "Streams the complete output directory for a completed job as a zip (default) or tar.gz archive",
+                "produces": [
+                    "application/zip"
+                ],
+                "tags": [
+                    "jobs"
+                ],
+                "summary": "Download job results as archive",
+                "parameters": [
+                    {
+                        "type": "string",
+                        "description": "Job UUID",
+                        "name": "job_id",
+                        "in": "path",
+                        "required": true
+                    },
+                    {
+                        "type": "string",
+                        "description": "Archive format: zip (default) or tar.gz",
+                        "name": "format",
+                        "in": "query"
+                    }
+                ],
+                "responses": {
+                    "200": {
+                        "description": "Archive file",
+                        "schema": {
+                            "type": "file"
+                        }
+                    },
+                    "400": {
+                        "description": "invalid job_id or format",
+                        "schema": {
+                            "type": "object",
+                            "additionalProperties": {
+                                "type": "string"
+                            }
+                        }
+                    },
+                    "404": {
+                        "description": "job not found or no results",
                         "schema": {
                             "type": "object",
                             "additionalProperties": {
@@ -339,6 +453,67 @@
         }
     },
     "definitions": {
+        "api.JobSummary": {
+            "type": "object",
+            "properties": {
+                "apktool_status": {
+                    "type": "string"
+                },
+                "completed_at": {
+                    "type": "string"
+                },
+                "error": {
+                    "type": "string"
+                },
+                "jadx_status": {
+                    "type": "string"
+                },
+                "job_id": {
+                    "type": "string"
+                },
+                "mobsf_status": {
+                    "type": "string"
+                },
+                "package_name": {
+                    "type": "string"
+                },
+                "sha256": {
+                    "type": "string"
+                },
+                "source": {
+                    "type": "string"
+                },
+                "status": {
+                    "type": "string"
+                },
+                "submitted_at": {
+                    "type": "string"
+                },
+                "version": {
+                    "type": "string"
+                }
+            }
+        },
+        "api.ListJobsResponse": {
+            "type": "object",
+            "properties": {
+                "jobs": {
+                    "type": "array",
+                    "items": {
+                        "$ref": "#/definitions/api.JobSummary"
+                    }
+                },
+                "limit": {
+                    "type": "integer"
+                },
+                "offset": {
+                    "type": "integer"
+                },
+                "total": {
+                    "type": "integer"
+                }
+            }
+        },
         "api.MetaInfo": {
             "type": "object",
             "properties": {
