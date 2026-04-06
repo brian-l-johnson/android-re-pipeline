@@ -53,15 +53,19 @@ export XDG_CACHE_HOME=/tmp/.cache
 # JADX_OPTS is passed directly to the JVM by the jadx launcher script.
 export JADX_OPTS="-Xmx3g"
 
-/opt/jadx/bin/jadx --output-dir "$OUTPUT" "$APK"
-JADX_EXIT=$?
+/opt/jadx/bin/jadx --output-dir "$OUTPUT" "$APK" || true
+# jadx exits non-zero when some classes fail to decompile, even if the
+# majority of output was produced successfully. Treat the job as a success
+# if any output files were written; fail only if no output was produced at all.
+FILE_COUNT=$(find "$OUTPUT" -type f 2>/dev/null | wc -l | tr -d ' ')
+DIR_COUNT=$(find "$OUTPUT" -type d 2>/dev/null | wc -l | tr -d ' ')
 
-if [ $JADX_EXIT -eq 0 ]; then
-    FILE_COUNT=$(find "$OUTPUT" -type f | wc -l | tr -d ' ')
-    DIR_COUNT=$(find "$OUTPUT" -type d | wc -l | tr -d ' ')
-    echo "Decompilation complete."
-    echo "  Files:       $FILE_COUNT"
-    echo "  Directories: $DIR_COUNT"
+if [ "$FILE_COUNT" -eq 0 ]; then
+    echo "ERROR: jadx produced no output files - treating as failure." >&2
+    exit 1
 fi
 
-exit $JADX_EXIT
+echo "Decompilation complete (partial errors are normal)."
+echo "  Files:       $FILE_COUNT"
+echo "  Directories: $DIR_COUNT"
+exit 0
