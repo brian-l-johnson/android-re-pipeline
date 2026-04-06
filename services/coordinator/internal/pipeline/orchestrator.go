@@ -137,7 +137,7 @@ func (o *Orchestrator) OnJobComplete(jobID uuid.UUID, tool string) {
 		return
 	}
 
-	if job.JadxStatus == "complete" && job.ApktoolStatus == "complete" {
+	if job.JadxStatus == "complete" && job.ApktoolStatus == "complete" && job.MobSFStatus == "pending" {
 		log.Printf("orchestrator: both tools complete for job %s — starting MobSF", jobID)
 		go o.runMobSF(jobID, job.APKPath)
 	}
