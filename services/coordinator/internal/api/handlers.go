@@ -418,7 +418,7 @@ func (h *Handler) handleResults(w http.ResponseWriter, r *http.Request) {
 // @Success      200  {file}   binary  "Archive file"
 // @Failure      400  {object} map[string]string  "invalid job_id or format"
 // @Failure      404  {object} map[string]string  "job not found or no results"
-// @Failure      409  {object} map[string]string  "job not complete"
+// @Failure      409  {object} map[string]string  "jadx/apktool not complete"
 // @Failure      500  {object} map[string]string  "error"
 // @Router       /results/{job_id}/download [get]
 func (h *Handler) handleDownload(w http.ResponseWriter, r *http.Request) {
@@ -438,8 +438,9 @@ func (h *Handler) handleDownload(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
-	if job.Status != "complete" {
-		writeError(w, http.StatusConflict, "job is not complete (status: "+job.Status+")")
+	// Allow download as soon as jadx and apktool are done; MobSF may still be running.
+	if job.JadxStatus != "complete" || job.ApktoolStatus != "complete" {
+		writeError(w, http.StatusConflict, "jadx and apktool not yet complete (jadx: "+job.JadxStatus+", apktool: "+job.ApktoolStatus+")")
 		return
 	}
 

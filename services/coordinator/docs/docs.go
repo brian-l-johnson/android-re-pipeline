@@ -196,7 +196,7 @@ const docTemplate = `{
                         }
                     },
                     "409": {
-                        "description": "job not complete",
+                        "description": "jadx/apktool not complete",
                         "schema": {
                             "type": "object",
                             "additionalProperties": {

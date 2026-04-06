@@ -298,7 +298,7 @@ paths:
               type: string
             type: object
         "409":
-          description: job not complete
+          description: jadx/apktool not complete
           schema:
             additionalProperties:
               type: string

@@ -160,7 +160,14 @@ func (o *Orchestrator) OnJobComplete(jobID uuid.UUID, tool string) {
 	}
 
 	if job.JadxStatus == "complete" && job.ApktoolStatus == "complete" && job.MobSFStatus == "pending" {
-		log.Printf("orchestrator: both tools complete for job %s — starting MobSF", jobID)
+		// Mark the job complete now so results are downloadable without waiting
+		// for MobSF. MobSF continues in the background and updates its own status.
+		resultsPath := fmt.Sprintf("%s/output/%s", o.dataDir, jobID.String())
+		if err := o.store.SetJobCompleted(ctx, jobID, resultsPath); err != nil {
+			log.Printf("orchestrator: set job completed failed (job=%s): %v", jobID, err)
+		} else {
+			log.Printf("orchestrator: job %s marked complete (results at %s); MobSF starting in background", jobID, resultsPath)
+		}
 		go o.runMobSF(jobID, job.APKPath)
 	}
 }
@@ -233,7 +240,6 @@ func (o *Orchestrator) runMobSF(jobID uuid.UUID, apkPath string) {
 	if err != nil {
 		log.Printf("orchestrator: mobsf upload failed (job=%s): %v", jobID, err)
 		_ = o.store.UpdateJobToolStatus(ctx, jobID, "mobsf", "failed")
-		_ = o.store.SetJobError(ctx, jobID, fmt.Sprintf("mobsf upload: %v", err))
 		return
 	}
 
@@ -241,7 +247,6 @@ func (o *Orchestrator) runMobSF(jobID uuid.UUID, apkPath string) {
 	if err != nil {
 		log.Printf("orchestrator: mobsf scan failed (job=%s): %v", jobID, err)
 		_ = o.store.UpdateJobToolStatus(ctx, jobID, "mobsf", "failed")
-		_ = o.store.SetJobError(ctx, jobID, fmt.Sprintf("mobsf scan: %v", err))
 		return
 	}
 
@@ -253,11 +258,5 @@ func (o *Orchestrator) runMobSF(jobID uuid.UUID, apkPath string) {
 		log.Printf("orchestrator: set mobsf complete failed (job=%s): %v", jobID, err)
 	}
 
-	resultsPath := fmt.Sprintf("%s/output/%s", o.dataDir, jobID.String())
-	if err := o.store.SetJobCompleted(ctx, jobID, resultsPath); err != nil {
-		log.Printf("orchestrator: set job completed failed (job=%s): %v", jobID, err)
-		return
-	}
-
-	log.Printf("orchestrator: job %s complete, results at %s", jobID, resultsPath)
+	log.Printf("orchestrator: mobsf complete for job %s", jobID)
 }
