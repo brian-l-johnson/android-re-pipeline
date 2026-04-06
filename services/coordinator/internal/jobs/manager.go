@@ -71,12 +71,12 @@ func (m *Manager) CreateAnalysisJobs(ctx context.Context, jobID uuid.UUID, apkPa
 	jadxJob := m.buildJob(jobID, "jadx", m.jadxImage,
 		[]string{"--apk", apkPath, "--output", outputBase + "/jadx"},
 		corev1.ResourceList{
-			corev1.ResourceMemory: resource.MustParse("2Gi"),
-			corev1.ResourceCPU:    resource.MustParse("1"),
+			corev1.ResourceMemory: resource.MustParse("512Mi"),
+			corev1.ResourceCPU:    resource.MustParse("500m"),
 		},
 		corev1.ResourceList{
-			corev1.ResourceMemory: resource.MustParse("2Gi"),
-			corev1.ResourceCPU:    resource.MustParse("1"),
+			corev1.ResourceMemory: resource.MustParse("4Gi"),
+			corev1.ResourceCPU:    resource.MustParse("2"),
 		},
 	)
 

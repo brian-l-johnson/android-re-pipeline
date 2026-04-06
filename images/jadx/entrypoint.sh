@@ -49,6 +49,10 @@ export XDG_CONFIG_HOME=/tmp/.config
 export XDG_DATA_HOME=/tmp/.local/share
 export XDG_CACHE_HOME=/tmp/.cache
 
+# Cap JVM heap to leave headroom within the container memory limit.
+# JADX_OPTS is passed directly to the JVM by the jadx launcher script.
+export JADX_OPTS="-Xmx3g"
+
 /opt/jadx/bin/jadx --output-dir "$OUTPUT" "$APK"
 JADX_EXIT=$?
 
