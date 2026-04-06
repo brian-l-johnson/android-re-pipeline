@@ -14,8 +14,10 @@ import (
 )
 
 const (
-	pollInterval   = 10 * time.Second
-	scanTimeout    = 10 * time.Minute
+	pollInterval  = 10 * time.Second
+	scanTimeout   = 10 * time.Minute
+	uploadTimeout = 5 * time.Minute
+	apiTimeout    = 30 * time.Second
 )
 
 // Client calls the MobSF REST API.
@@ -26,11 +28,14 @@ type Client struct {
 }
 
 // NewClient creates a MobSF client pointed at baseURL with the given API key.
+// The underlying http.Client has no global timeout; each method applies its
+// own context deadline so that large APK uploads get a generous window while
+// short API calls remain bounded.
 func NewClient(baseURL, apiKey string) *Client {
 	return &Client{
 		baseURL: baseURL,
 		apiKey:  apiKey,
-		http:    &http.Client{Timeout: 30 * time.Second},
+		http:    &http.Client{},
 	}
 }
 
@@ -59,7 +64,10 @@ func (c *Client) Upload(ctx context.Context, apkPath string) (string, error) {
 	}
 	mw.Close()
 
-	req, err := http.NewRequestWithContext(ctx, http.MethodPost, c.baseURL+"/api/v1/upload", &body)
+	uploadCtx, cancel := context.WithTimeout(ctx, uploadTimeout)
+	defer cancel()
+
+	req, err := http.NewRequestWithContext(uploadCtx, http.MethodPost, c.baseURL+"/api/v1/upload", &body)
 	if err != nil {
 		return "", fmt.Errorf("build upload request: %w", err)
 	}
@@ -122,8 +130,11 @@ func (c *Client) PollScan(ctx context.Context, scanHash string) (*ScanResult, er
 }
 
 func (c *Client) startScan(ctx context.Context, scanHash string) error {
+	apiCtx, cancel := context.WithTimeout(ctx, apiTimeout)
+	defer cancel()
+
 	formData := fmt.Sprintf("hash=%s", scanHash)
-	req, err := http.NewRequestWithContext(ctx, http.MethodPost, c.baseURL+"/api/v1/scan",
+	req, err := http.NewRequestWithContext(apiCtx, http.MethodPost, c.baseURL+"/api/v1/scan",
 		bytes.NewBufferString(formData))
 	if err != nil {
 		return err
@@ -147,8 +158,11 @@ func (c *Client) startScan(ctx context.Context, scanHash string) error {
 // tryGetReport attempts to fetch the JSON report for scanHash.
 // done is true when the report is available.
 func (c *Client) tryGetReport(ctx context.Context, scanHash string) (json.RawMessage, bool, error) {
+	apiCtx, cancel := context.WithTimeout(ctx, apiTimeout)
+	defer cancel()
+
 	formData := fmt.Sprintf("hash=%s", scanHash)
-	req, err := http.NewRequestWithContext(ctx, http.MethodPost, c.baseURL+"/api/v1/report_json",
+	req, err := http.NewRequestWithContext(apiCtx, http.MethodPost, c.baseURL+"/api/v1/report_json",
 		bytes.NewBufferString(formData))
 	if err != nil {
 		return nil, false, err
@@ -179,8 +193,11 @@ func (c *Client) tryGetReport(ctx context.Context, scanHash string) (json.RawMes
 
 // GetScorecard fetches the MobSF scorecard for scanHash.
 func (c *Client) GetScorecard(ctx context.Context, scanHash string) (json.RawMessage, error) {
+	apiCtx, cancel := context.WithTimeout(ctx, apiTimeout)
+	defer cancel()
+
 	url := fmt.Sprintf("%s/api/v1/scorecard?hash=%s", c.baseURL, scanHash)
-	req, err := http.NewRequestWithContext(ctx, http.MethodGet, url, nil)
+	req, err := http.NewRequestWithContext(apiCtx, http.MethodGet, url, nil)
 	if err != nil {
 		return nil, fmt.Errorf("build scorecard request: %w", err)
 	}
