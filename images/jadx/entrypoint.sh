@@ -42,6 +42,13 @@ echo "Starting jadx decompilation..."
 echo "  APK:    $APK"
 echo "  Output: $OUTPUT"
 
+# jadx tries to create config/plugin dirs relative to HOME or XDG dirs.
+# In a read-only-root non-root container these must be redirected to /tmp.
+export HOME=/tmp
+export XDG_CONFIG_HOME=/tmp/.config
+export XDG_DATA_HOME=/tmp/.local/share
+export XDG_CACHE_HOME=/tmp/.cache
+
 /opt/jadx/bin/jadx --output-dir "$OUTPUT" "$APK"
 JADX_EXIT=$?
 
