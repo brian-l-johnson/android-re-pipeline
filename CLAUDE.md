@@ -10,7 +10,7 @@ export PATH="/opt/local/bin:$PATH"
 /opt/local/bin/go build ./...
 ```
 
-`swag`, `swag`, and other Go tools installed via `go install` live at `~/go/bin/`.
+`swag` and other Go tools installed via `go install` live at `~/go/bin/`.
 
 ## Repository Overview
 
@@ -65,6 +65,18 @@ Build from the image-specific directory (each image is self-contained):
 docker build -f images/jadx/Dockerfile    -t re-jadx:dev    images/jadx/
 docker build -f images/apktool/Dockerfile -t re-apktool:dev images/apktool/
 ```
+
+## Swagger / OpenAPI Docs
+
+The coordinator service uses [swaggo](https://github.com/swaggo/swag) to generate OpenAPI docs from annotations in `internal/api/handlers.go`. The generated `docs/` package is embedded in the binary at compile time.
+
+**After adding or modifying any HTTP handler or its `@Summary`/`@Param`/`@Success` annotations, always regenerate the docs:**
+
+```bash
+cd services/coordinator && ~/go/bin/swag init -g cmd/server/main.go --output docs
+```
+
+Commit the updated `docs/` files alongside the handler changes. CI also runs `swag init` before the Docker build as a safety net, but the committed docs should always be kept current so diffs are meaningful.
 
 ## GitOps
 
