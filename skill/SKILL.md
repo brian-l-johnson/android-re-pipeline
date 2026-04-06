@@ -90,6 +90,27 @@ This returns:
 
 ---
 
+## Downloading Results as an Archive
+
+Download the complete output directory (jadx + apktool output) as a zip or tar.gz:
+
+```bash
+# zip (default)
+curl -L -o results.zip \
+  "https://coordinator.apps.blj.wtf/results/<job_id>/download?format=zip"
+
+# tar.gz
+curl -L -o results.tar.gz \
+  "https://coordinator.apps.blj.wtf/results/<job_id>/download?format=tar.gz"
+```
+
+The filename returned in `Content-Disposition` will be `<package_name>-<version>.zip`
+when package info is available, otherwise `<job_id>.zip`.
+Large outputs (jadx can produce 100–500 MB) stream directly — no server-side
+buffering — so the download starts immediately.
+
+---
+
 ## Browsing the File Tree
 
 List files at a path within the job's output directory:
@@ -232,6 +253,32 @@ curl "https://coordinator.apps.blj.wtf/results/<job_id>"
 # The mobsf.report field contains the complete MobSF JSON report,
 # including security score, findings, and API analysis
 ```
+
+---
+
+## Listing All Jobs
+
+```bash
+# Most recent 50 jobs
+curl https://coordinator.apps.blj.wtf/jobs
+
+# With pagination
+curl "https://coordinator.apps.blj.wtf/jobs?limit=20&offset=40"
+```
+
+Each entry includes `job_id`, `status`, `package_name`, `version`, `source`,
+`sha256`, `submitted_at`, `completed_at`, and per-tool statuses.
+
+The web dashboard at **https://coordinator.apps.blj.wtf/** shows the same data
+with live auto-refresh every 5 seconds.
+
+---
+
+## Deduplication
+
+If the same APK (identified by SHA256) has already been fully analysed, the
+pipeline returns a new `job_id` that is immediately `complete` with the existing
+results — no re-analysis is triggered. You can poll the new `job_id` normally.
 
 ---
 
