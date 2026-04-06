@@ -124,6 +124,23 @@ func (o *Orchestrator) HandleIngestionFailed(ctx context.Context, msg *queue.Fai
 func (o *Orchestrator) OnJobComplete(jobID uuid.UUID, tool string) {
 	ctx := context.Background()
 
+	// Guard against re-processing already-complete events (e.g. informer resync).
+	existing, err := o.store.GetJob(ctx, jobID)
+	if err != nil {
+		log.Printf("orchestrator: get job %s failed: %v", jobID, err)
+		return
+	}
+	switch tool {
+	case "jadx":
+		if existing.JadxStatus == "complete" {
+			return
+		}
+	case "apktool":
+		if existing.ApktoolStatus == "complete" {
+			return
+		}
+	}
+
 	if err := o.store.UpdateJobToolStatus(ctx, jobID, tool, "complete"); err != nil {
 		log.Printf("orchestrator: update tool status failed (job=%s tool=%s): %v", jobID, tool, err)
 		return
