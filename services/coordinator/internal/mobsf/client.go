@@ -15,7 +15,7 @@ import (
 
 const (
 	pollInterval  = 10 * time.Second
-	scanTimeout   = 10 * time.Minute
+	scanTimeout   = 30 * time.Minute
 	uploadTimeout = 5 * time.Minute
 	apiTimeout    = 30 * time.Second
 )

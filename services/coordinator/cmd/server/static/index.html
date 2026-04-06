@@ -1,0 +1,348 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+  <meta charset="UTF-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1.0">
+  <title>Android RE Pipeline</title>
+  <style>
+    *, *::before, *::after { box-sizing: border-box; margin: 0; padding: 0; }
+    body {
+      background: #0d1117;
+      color: #e6edf3;
+      font-family: -apple-system, BlinkMacSystemFont, 'Segoe UI', Roboto, sans-serif;
+      font-size: 14px;
+      line-height: 1.5;
+    }
+    re-dashboard { display: block; }
+  </style>
+</head>
+<body>
+  <re-dashboard></re-dashboard>
+
+  <script>
+  class REDashboard extends HTMLElement {
+    constructor() {
+      super();
+      this._shadow = this.attachShadow({ mode: 'open' });
+      this._jobs = [];
+      this._total = 0;
+      this._error = null;
+      this._lastUpdated = null;
+      this._expanded = null;
+    }
+
+    connectedCallback() {
+      this._render();
+      this._poll();
+      this._timer = setInterval(() => this._poll(), 5000);
+    }
+
+    disconnectedCallback() {
+      clearInterval(this._timer);
+    }
+
+    async _poll() {
+      try {
+        const resp = await fetch('/jobs?limit=100');
+        if (!resp.ok) throw new Error(`HTTP ${resp.status}`);
+        const data = await resp.json();
+        this._jobs = data.jobs || [];
+        this._total = data.total || 0;
+        this._lastUpdated = new Date();
+        this._error = null;
+      } catch (e) {
+        this._error = e.message;
+      }
+      this._render();
+    }
+
+    _relTime(iso) {
+      if (!iso) return '—';
+      const s = Math.floor((Date.now() - new Date(iso)) / 1000);
+      if (s < 5)  return 'just now';
+      if (s < 60) return `${s}s ago`;
+      const m = Math.floor(s / 60);
+      if (m < 60) return `${m}m ago`;
+      const h = Math.floor(m / 60);
+      if (h < 24) return `${h}h ago`;
+      return `${Math.floor(h / 24)}d ago`;
+    }
+
+    _duration(job) {
+      if (!job.completed_at || !job.submitted_at) return '—';
+      const ms = new Date(job.completed_at) - new Date(job.submitted_at);
+      const s = Math.floor(ms / 1000);
+      if (s < 60) return `${s}s`;
+      return `${Math.floor(s / 60)}m ${s % 60}s`;
+    }
+
+    _badge(status) {
+      const cfg = {
+        pending:  { bg: '#21262d', fg: '#8b949e', label: 'pending' },
+        running:  { bg: '#1f3049', fg: '#79c0ff', label: 'running', pulse: true },
+        complete: { bg: '#1a3a2a', fg: '#56d364', label: 'complete' },
+        failed:   { bg: '#3d1515', fg: '#f85149', label: 'failed' },
+      };
+      const c = cfg[status] || cfg.pending;
+      const anim = c.pulse ? 'animation:pulse 2s ease-in-out infinite;' : '';
+      return `<span style="display:inline-flex;align-items:center;gap:5px;padding:3px 10px;border-radius:20px;font-size:11px;font-weight:600;letter-spacing:.04em;text-transform:uppercase;background:${c.bg};color:${c.fg};${anim}">
+        ${c.pulse ? '<span style="width:6px;height:6px;border-radius:50%;background:currentColor;animation:pulse 1.5s ease-in-out infinite"></span>' : ''}
+        ${c.label}
+      </span>`;
+    }
+
+    _toolPip(status, label) {
+      const colors = {
+        pending:  '#3d444d',
+        running:  '#388bfd',
+        complete: '#3fb950',
+        failed:   '#f85149',
+      };
+      const c = colors[status] || colors.pending;
+      return `<span title="${label}: ${status}" style="display:inline-flex;align-items:center;gap:3px;font-size:11px;color:${c}">
+        <svg width="8" height="8" viewBox="0 0 8 8"><circle cx="4" cy="4" r="4" fill="${c}"/></svg>
+        ${label}
+      </span>`;
+    }
+
+    _shortSHA(sha) {
+      return sha ? sha.slice(0, 10) + '…' : '—';
+    }
+
+    _counts() {
+      return this._jobs.reduce((a, j) => {
+        a[j.status] = (a[j.status] || 0) + 1;
+        return a;
+      }, {});
+    }
+
+    _toggle(idx) {
+      this._expanded = this._expanded === idx ? null : idx;
+      this._render();
+    }
+
+    _render() {
+      const jobs = this._jobs;
+      const counts = this._counts();
+      const updatedText = this._error
+        ? '⚠ fetch error'
+        : this._lastUpdated
+          ? `↻ ${this._relTime(this._lastUpdated.toISOString())}`
+          : '…';
+
+      this._shadow.innerHTML = `
+        <style>
+          :host {
+            display: block;
+            min-height: 100vh;
+            background: #0d1117;
+            color: #e6edf3;
+            font-family: -apple-system, BlinkMacSystemFont, 'Segoe UI', Roboto, sans-serif;
+            font-size: 14px;
+          }
+          @keyframes pulse { 0%,100%{opacity:1} 50%{opacity:.4} }
+
+          /* ── Header ── */
+          .header {
+            display: flex;
+            justify-content: space-between;
+            align-items: center;
+            padding: 14px 24px;
+            border-bottom: 1px solid #21262d;
+          }
+          .header-title { font-size: 15px; font-weight: 600; color: #f0f6fc; }
+          .header-title span { color: #6e7681; font-weight: 400; }
+          .header-meta { font-size: 12px; color: #6e7681; }
+
+          /* ── Summary bar ── */
+          .summary {
+            display: flex;
+            gap: 12px;
+            padding: 14px 24px;
+            border-bottom: 1px solid #21262d;
+            flex-wrap: wrap;
+          }
+          .stat {
+            display: flex;
+            flex-direction: column;
+            align-items: center;
+            background: #161b22;
+            border: 1px solid #21262d;
+            border-radius: 8px;
+            padding: 10px 20px;
+            min-width: 90px;
+          }
+          .stat-n { font-size: 22px; font-weight: 700; }
+          .stat-l { font-size: 10px; color: #6e7681; text-transform: uppercase; letter-spacing: .06em; margin-top: 2px; }
+
+          /* ── Error banner ── */
+          .error-banner {
+            margin: 12px 24px;
+            padding: 10px 14px;
+            background: #2d1212;
+            border: 1px solid #6e2020;
+            border-radius: 6px;
+            color: #f85149;
+            font-size: 13px;
+          }
+
+          /* ── Table ── */
+          .table-wrap { overflow-x: auto; }
+          table { width: 100%; border-collapse: collapse; }
+          thead th {
+            padding: 9px 16px;
+            text-align: left;
+            font-size: 11px;
+            font-weight: 600;
+            color: #6e7681;
+            text-transform: uppercase;
+            letter-spacing: .06em;
+            border-bottom: 1px solid #21262d;
+            background: #0d1117;
+            position: sticky;
+            top: 0;
+            white-space: nowrap;
+          }
+          tbody tr.job-row {
+            border-bottom: 1px solid #161b22;
+            cursor: pointer;
+            transition: background .1s;
+          }
+          tbody tr.job-row:hover { background: #161b22; }
+          tbody tr.job-row.open   { background: #161b22; }
+          td { padding: 10px 16px; vertical-align: middle; }
+
+          .pkg-name { font-weight: 500; color: #58a6ff; }
+          .pkg-ver  { font-size: 12px; color: #6e7681; margin-top: 1px; }
+          .sha-val  { font-family: 'SFMono-Regular', 'Consolas', monospace; font-size: 11px; color: #8b949e; }
+
+          .tools { display: flex; gap: 8px; }
+
+          /* ── Expanded detail row ── */
+          .detail-row td { padding: 0; border-bottom: 1px solid #21262d; }
+          .detail-box {
+            padding: 12px 24px 12px 32px;
+            background: #0d1117;
+            border-left: 3px solid #30363d;
+            font-size: 12px;
+            color: #8b949e;
+          }
+          .detail-id { font-family: monospace; }
+          .detail-err { color: #f85149; margin-top: 6px; word-break: break-word; }
+          .detail-grid { display: flex; gap: 24px; flex-wrap: wrap; }
+          .detail-item label { display: block; font-size: 10px; text-transform: uppercase; letter-spacing: .06em; color: #6e7681; margin-bottom: 2px; }
+
+          /* ── Empty state ── */
+          .empty { text-align: center; padding: 60px 24px; color: #6e7681; }
+          .empty p { margin-top: 8px; font-size: 13px; }
+        </style>
+
+        <div class="header">
+          <div class="header-title">Android RE Pipeline <span>/ Scan Jobs</span></div>
+          <div class="header-meta">${updatedText}</div>
+        </div>
+
+        ${this._error ? `<div class="error-banner">⚠ ${this._error}</div>` : ''}
+
+        <div class="summary">
+          <div class="stat">
+            <div class="stat-n">${this._total}</div>
+            <div class="stat-l">Total</div>
+          </div>
+          <div class="stat">
+            <div class="stat-n" style="color:#79c0ff">${counts.running || 0}</div>
+            <div class="stat-l">Running</div>
+          </div>
+          <div class="stat">
+            <div class="stat-n" style="color:#56d364">${counts.complete || 0}</div>
+            <div class="stat-l">Complete</div>
+          </div>
+          <div class="stat">
+            <div class="stat-n" style="color:#f85149">${counts.failed || 0}</div>
+            <div class="stat-l">Failed</div>
+          </div>
+          <div class="stat">
+            <div class="stat-n" style="color:#8b949e">${counts.pending || 0}</div>
+            <div class="stat-l">Pending</div>
+          </div>
+        </div>
+
+        <div class="table-wrap">
+          <table>
+            <thead>
+              <tr>
+                <th>Package / Version</th>
+                <th>Source</th>
+                <th>SHA256</th>
+                <th>Submitted</th>
+                <th>Duration</th>
+                <th>Status</th>
+                <th>Tools</th>
+              </tr>
+            </thead>
+            <tbody>
+              ${jobs.length === 0
+                ? `<tr><td colspan="7" class="empty">
+                    <svg width="32" height="32" viewBox="0 0 24 24" fill="none" stroke="#3d444d" stroke-width="1.5">
+                      <circle cx="11" cy="11" r="8"/><path d="m21 21-4.35-4.35"/>
+                    </svg>
+                    <p>No jobs yet — submit an APK to get started.</p>
+                  </td></tr>`
+                : jobs.map((j, i) => {
+                    const isOpen = this._expanded === i;
+                    return `
+                      <tr class="job-row${isOpen ? ' open' : ''}"
+                          onclick="this.getRootNode().host._toggle(${i})">
+                        <td>
+                          <div class="pkg-name">${j.package_name || '(unknown)'}</div>
+                          ${j.version ? `<div class="pkg-ver">${j.version}</div>` : ''}
+                        </td>
+                        <td>${j.source || '—'}</td>
+                        <td><span class="sha-val">${this._shortSHA(j.sha256)}</span></td>
+                        <td style="white-space:nowrap">${this._relTime(j.submitted_at)}</td>
+                        <td style="white-space:nowrap">${this._duration(j)}</td>
+                        <td>${this._badge(j.status)}</td>
+                        <td>
+                          <div class="tools">
+                            ${this._toolPip(j.jadx_status, 'jadx')}
+                            ${this._toolPip(j.apktool_status, 'apkt')}
+                            ${this._toolPip(j.mobsf_status, 'mobsf')}
+                          </div>
+                        </td>
+                      </tr>
+                      ${isOpen ? `
+                        <tr class="detail-row">
+                          <td colspan="7">
+                            <div class="detail-box">
+                              <div class="detail-grid">
+                                <div class="detail-item">
+                                  <label>Job ID</label>
+                                  <span class="detail-id">${j.job_id}</span>
+                                </div>
+                                ${j.sha256 ? `<div class="detail-item">
+                                  <label>SHA256</label>
+                                  <span class="detail-id">${j.sha256}</span>
+                                </div>` : ''}
+                                ${j.completed_at ? `<div class="detail-item">
+                                  <label>Completed</label>
+                                  <span>${this._relTime(j.completed_at)}</span>
+                                </div>` : ''}
+                              </div>
+                              ${j.error ? `<div class="detail-err">⚠ ${j.error}</div>` : ''}
+                            </div>
+                          </td>
+                        </tr>` : ''}
+                    `;
+                  }).join('')
+              }
+            </tbody>
+          </table>
+        </div>
+      `;
+    }
+  }
+
+  customElements.define('re-dashboard', REDashboard);
+  </script>
+</body>
+</html>

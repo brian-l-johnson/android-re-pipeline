@@ -208,6 +208,80 @@ func (s *Store) ListRunningJobs(ctx context.Context) ([]Job, error) {
 	return jobs, nil
 }
 
+// ListJobs returns jobs ordered by submitted_at DESC with pagination.
+func (s *Store) ListJobs(ctx context.Context, limit, offset int) ([]Job, error) {
+	rows, err := s.pool.Query(ctx, `
+		SELECT id, status, apk_path, package_name, version, source, sha256,
+		       submitted_at, started_at, completed_at, error, results_path,
+		       jadx_status, apktool_status, mobsf_status, mobsf_report
+		FROM jobs
+		ORDER BY submitted_at DESC
+		LIMIT $1 OFFSET $2`,
+		limit, offset,
+	)
+	if err != nil {
+		return nil, fmt.Errorf("list jobs: %w", err)
+	}
+	defer rows.Close()
+
+	var jobs []Job
+	for rows.Next() {
+		job, err := scanJob(rows)
+		if err != nil {
+			return nil, fmt.Errorf("scan job: %w", err)
+		}
+		jobs = append(jobs, *job)
+	}
+	if err := rows.Err(); err != nil {
+		return nil, fmt.Errorf("iterate jobs: %w", err)
+	}
+	return jobs, nil
+}
+
+// CountJobs returns the total number of jobs in the database.
+func (s *Store) CountJobs(ctx context.Context) (int, error) {
+	var count int
+	err := s.pool.QueryRow(ctx, `SELECT COUNT(*) FROM jobs`).Scan(&count)
+	if err != nil {
+		return 0, fmt.Errorf("count jobs: %w", err)
+	}
+	return count, nil
+}
+
+// CreateJobAsDuplicate inserts a new job record that is immediately complete,
+// copying results from an existing completed job. Used when the same APK
+// SHA256 has already been fully analysed.
+func (s *Store) CreateJobAsDuplicate(ctx context.Context, newJobID uuid.UUID, newAPKPath string, existing *Job, submittedAt time.Time) error {
+	now := time.Now()
+	resultsPath := ""
+	if existing.ResultsPath != nil {
+		resultsPath = *existing.ResultsPath
+	}
+	var report []byte
+	if existing.MobSFReport != nil {
+		report = []byte(existing.MobSFReport)
+	}
+
+	_, err := s.pool.Exec(ctx, `
+		INSERT INTO jobs (
+			id, status, apk_path, package_name, version, source, sha256,
+			submitted_at, completed_at, results_path,
+			jadx_status, apktool_status, mobsf_status, mobsf_report
+		) VALUES (
+			$1, 'complete', $2, $3, $4, $5, $6,
+			$7, $8, $9,
+			$10, $11, $12, $13
+		)`,
+		newJobID, newAPKPath, existing.PackageName, existing.Version, existing.Source, existing.SHA256,
+		submittedAt, now, resultsPath,
+		existing.JadxStatus, existing.ApktoolStatus, existing.MobSFStatus, report,
+	)
+	if err != nil {
+		return fmt.Errorf("create dedup job: %w", err)
+	}
+	return nil
+}
+
 // InsertAPKMetadata inserts APK metadata parsed from apktool output.
 func (s *Store) InsertAPKMetadata(ctx context.Context, meta APKMetadata) error {
 	_, err := s.pool.Exec(ctx, `

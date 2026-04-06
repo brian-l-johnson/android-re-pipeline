@@ -10,7 +10,9 @@ package main
 
 import (
 	"context"
+	"embed"
 	"fmt"
+	"io/fs"
 	"log"
 	"net/http"
 	"os"
@@ -32,6 +34,9 @@ import (
 	"github.com/brian-l-johnson/android-re-pipeline/services/coordinator/internal/queue"
 	"github.com/brian-l-johnson/android-re-pipeline/services/coordinator/internal/store"
 )
+
+//go:embed static
+var staticFiles embed.FS
 
 func main() {
 	// -----------------------------------------------------------------------
@@ -129,6 +134,14 @@ func main() {
 	mux := http.NewServeMux()
 	h.RegisterRoutes(mux)
 	mux.Handle("/swagger/", httpSwagger.WrapHandler)
+
+	// Serve the web UI from the embedded static directory.
+	// Strip the "static/" prefix so index.html is served at /.
+	staticFS, err := fs.Sub(staticFiles, "static")
+	if err != nil {
+		log.Fatalf("build static fs: %v", err)
+	}
+	mux.Handle("GET /", http.FileServerFS(staticFS))
 
 	addr := fmt.Sprintf(":%s", servicePort)
 	srv := &http.Server{

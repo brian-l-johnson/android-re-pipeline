@@ -123,11 +123,112 @@ func NewHandler(s *store.Store, dataDir string) *Handler {
 // RegisterRoutes registers all coordinator API routes on mux.
 func (h *Handler) RegisterRoutes(mux *http.ServeMux) {
 	mux.HandleFunc("GET /health", h.handleHealth)
+	mux.HandleFunc("GET /jobs", h.handleListJobs)
 	mux.HandleFunc("GET /status/{job_id}", h.handleStatus)
 	mux.HandleFunc("GET /results/{job_id}", h.handleResults)
 	mux.HandleFunc("GET /results/{job_id}/tree", h.handleTree)
 	mux.HandleFunc("GET /results/{job_id}/file", h.handleFile)
 	mux.HandleFunc("GET /results/{job_id}/search", h.handleSearch)
+}
+
+// ---------------------------------------------------------------------------
+// GET /jobs?limit=N&offset=N
+// ---------------------------------------------------------------------------
+
+// JobSummary is a single entry in the jobs list response.
+type JobSummary struct {
+	JobID         string `json:"job_id"`
+	Status        string `json:"status"`
+	PackageName   string `json:"package_name,omitempty"`
+	Version       string `json:"version,omitempty"`
+	Source        string `json:"source,omitempty"`
+	SHA256        string `json:"sha256,omitempty"`
+	SubmittedAt   string `json:"submitted_at"`
+	CompletedAt   string `json:"completed_at,omitempty"`
+	JadxStatus    string `json:"jadx_status"`
+	ApktoolStatus string `json:"apktool_status"`
+	MobSFStatus   string `json:"mobsf_status"`
+	Error         string `json:"error,omitempty"`
+}
+
+// ListJobsResponse is the response body for GET /jobs.
+type ListJobsResponse struct {
+	Jobs   []JobSummary `json:"jobs"`
+	Total  int          `json:"total"`
+	Limit  int          `json:"limit"`
+	Offset int          `json:"offset"`
+}
+
+// handleListJobs handles GET /jobs.
+//
+// @Summary      List all jobs
+// @Description  Returns a paginated list of analysis jobs ordered by submission time descending
+// @Tags         jobs
+// @Produce      json
+// @Param        limit   query     int  false  "Maximum number of results (default 50, max 200)"
+// @Param        offset  query     int  false  "Pagination offset (default 0)"
+// @Success      200     {object}  api.ListJobsResponse
+// @Failure      500     {object}  map[string]string  "error"
+// @Router       /jobs [get]
+func (h *Handler) handleListJobs(w http.ResponseWriter, r *http.Request) {
+	limit := 50
+	offset := 0
+
+	if v := r.URL.Query().Get("limit"); v != "" {
+		if n, err := strconv.Atoi(v); err == nil && n > 0 {
+			limit = n
+		}
+	}
+	if limit > 200 {
+		limit = 200
+	}
+	if v := r.URL.Query().Get("offset"); v != "" {
+		if n, err := strconv.Atoi(v); err == nil && n >= 0 {
+			offset = n
+		}
+	}
+
+	jobs, err := h.store.ListJobs(r.Context(), limit, offset)
+	if err != nil {
+		writeError(w, http.StatusInternalServerError, "failed to list jobs")
+		return
+	}
+
+	total, err := h.store.CountJobs(r.Context())
+	if err != nil {
+		writeError(w, http.StatusInternalServerError, "failed to count jobs")
+		return
+	}
+
+	summaries := make([]JobSummary, 0, len(jobs))
+	for _, job := range jobs {
+		s := JobSummary{
+			JobID:         job.ID.String(),
+			Status:        job.Status,
+			PackageName:   job.PackageName,
+			Version:       job.Version,
+			Source:        job.Source,
+			SHA256:        job.SHA256,
+			SubmittedAt:   job.SubmittedAt.Format(time.RFC3339),
+			JadxStatus:    job.JadxStatus,
+			ApktoolStatus: job.ApktoolStatus,
+			MobSFStatus:   job.MobSFStatus,
+		}
+		if job.CompletedAt != nil {
+			s.CompletedAt = job.CompletedAt.Format(time.RFC3339)
+		}
+		if job.Error != nil {
+			s.Error = *job.Error
+		}
+		summaries = append(summaries, s)
+	}
+
+	writeJSON(w, http.StatusOK, ListJobsResponse{
+		Jobs:   summaries,
+		Total:  total,
+		Limit:  limit,
+		Offset: offset,
+	})
 }
 
 // ---------------------------------------------------------------------------

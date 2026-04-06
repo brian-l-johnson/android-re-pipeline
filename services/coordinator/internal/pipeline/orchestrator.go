@@ -50,19 +50,24 @@ func (o *Orchestrator) HandleIngested(ctx context.Context, msg *queue.IngestedMe
 		return fmt.Errorf("invalid job_id %q: %w", msg.JobID, err)
 	}
 
-	// Dedup: if a completed job exists for this SHA256, skip re-processing.
+	submittedAt, err := time.Parse(time.RFC3339, msg.SubmittedAt)
+	if err != nil {
+		submittedAt = time.Now()
+	}
+
+	// Dedup: if a completed job exists for this SHA256, create a completed
+	// job record for the new ID so the caller can poll it and get results
+	// immediately without re-running the full analysis pipeline.
 	if msg.SHA256 != "" {
 		existing, err := o.store.GetJobBySHA256(ctx, msg.SHA256)
 		if err == nil && existing != nil && existing.Status == "complete" {
 			log.Printf("orchestrator: job %s deduped (sha256 %s already complete as %s)",
 				jobID, msg.SHA256, existing.ID)
+			if err := o.store.CreateJobAsDuplicate(ctx, jobID, msg.APKPath, existing, submittedAt); err != nil {
+				log.Printf("orchestrator: create dedup job record failed (job=%s): %v", jobID, err)
+			}
 			return nil
 		}
-	}
-
-	submittedAt, err := time.Parse(time.RFC3339, msg.SubmittedAt)
-	if err != nil {
-		submittedAt = time.Now()
 	}
 
 	job := store.Job{
