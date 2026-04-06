@@ -12,6 +12,7 @@ import (
 	"path/filepath"
 	"time"
 
+	"github.com/brian-l-johnson/android-re-pipeline/services/ingestion/internal/apkinfo"
 	"github.com/brian-l-johnson/android-re-pipeline/services/ingestion/internal/queue"
 	"github.com/brian-l-johnson/android-re-pipeline/services/ingestion/internal/sources"
 	"github.com/google/uuid"
@@ -128,11 +129,20 @@ func (h *Handler) UploadHandler(w http.ResponseWriter, r *http.Request) {
 	}
 
 	apkPath := filepath.Join(h.apksDir(), jobID+".apk")
+
+	// Best-effort manifest parse — failure is non-fatal, the coordinator will
+	// populate these fields later from apktool output.
+	var packageName, version string
+	if info, err := apkinfo.ParseAPK(apkPath); err == nil {
+		packageName = info.PackageName
+		version = info.VersionName
+	}
+
 	msg := &queue.IngestedMessage{
 		JobID:       jobID,
 		APKPath:     apkPath,
-		PackageName: "",
-		Version:     "",
+		PackageName: packageName,
+		Version:     version,
 		Source:      "upload",
 		SHA256:      sha256sum,
 		SubmittedAt: time.Now().UTC().Format(time.RFC3339),
@@ -209,11 +219,27 @@ func (h *Handler) DownloadHandler(w http.ResponseWriter, r *http.Request) {
 	}
 
 	apkPath := filepath.Join(h.apksDir(), jobID+".apk")
+
+	// Prefer metadata from the source (e.g. store API), but fall back to
+	// parsing the manifest directly for sources like directurl that have none.
+	packageName := meta.PackageName
+	version := meta.Version
+	if packageName == "" || version == "" {
+		if info, err := apkinfo.ParseAPK(apkPath); err == nil {
+			if packageName == "" {
+				packageName = info.PackageName
+			}
+			if version == "" {
+				version = info.VersionName
+			}
+		}
+	}
+
 	msg := &queue.IngestedMessage{
 		JobID:       jobID,
 		APKPath:     apkPath,
-		PackageName: meta.PackageName,
-		Version:     meta.Version,
+		PackageName: packageName,
+		Version:     version,
 		Source:      meta.Source,
 		SHA256:      sha256sum,
 		SubmittedAt: time.Now().UTC().Format(time.RFC3339),
