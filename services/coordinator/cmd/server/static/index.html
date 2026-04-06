@@ -229,8 +229,11 @@
           }
           .detail-id { font-family: monospace; }
           .detail-err { color: #f85149; margin-top: 6px; word-break: break-word; }
-          .detail-grid { display: flex; gap: 24px; flex-wrap: wrap; }
+          .detail-grid { display: flex; gap: 24px; flex-wrap: wrap; align-items: flex-start; }
           .detail-item label { display: block; font-size: 10px; text-transform: uppercase; letter-spacing: .06em; color: #6e7681; margin-bottom: 2px; }
+          .dl-links { display: flex; gap: 8px; margin-top: 10px; }
+          .dl-btn { display: inline-flex; align-items: center; gap: 5px; padding: 5px 12px; border-radius: 6px; font-size: 12px; font-weight: 500; text-decoration: none; background: #21262d; color: #e6edf3; border: 1px solid #30363d; transition: background .1s; }
+          .dl-btn:hover { background: #30363d; }
 
           /* ── Empty state ── */
           .empty { text-align: center; padding: 60px 24px; color: #6e7681; }
@@ -329,6 +332,17 @@
                                 </div>` : ''}
                               </div>
                               ${j.error ? `<div class="detail-err">⚠ ${j.error}</div>` : ''}
+                              ${j.status === 'complete' ? `
+                              <div class="dl-links">
+                                <a class="dl-btn" href="/results/${j.job_id}/download?format=zip" download>
+                                  <svg width="12" height="12" viewBox="0 0 16 16" fill="currentColor"><path d="M2.75 14A1.75 1.75 0 0 1 1 12.25v-2.5a.75.75 0 0 1 1.5 0v2.5c0 .138.112.25.25.25h10.5a.25.25 0 0 0 .25-.25v-2.5a.75.75 0 0 1 1.5 0v2.5A1.75 1.75 0 0 1 13.25 14Z"/><path d="M7.25 7.689V2a.75.75 0 0 1 1.5 0v5.689l1.97-1.97a.749.749 0 1 1 1.06 1.06l-3.25 3.25a.749.749 0 0 1-1.06 0L4.22 6.779a.749.749 0 1 1 1.06-1.06l1.97 1.97Z"/></svg>
+                                  zip
+                                </a>
+                                <a class="dl-btn" href="/results/${j.job_id}/download?format=tar.gz" download>
+                                  <svg width="12" height="12" viewBox="0 0 16 16" fill="currentColor"><path d="M2.75 14A1.75 1.75 0 0 1 1 12.25v-2.5a.75.75 0 0 1 1.5 0v2.5c0 .138.112.25.25.25h10.5a.25.25 0 0 0 .25-.25v-2.5a.75.75 0 0 1 1.5 0v2.5A1.75 1.75 0 0 1 13.25 14Z"/><path d="M7.25 7.689V2a.75.75 0 0 1 1.5 0v5.689l1.97-1.97a.749.749 0 1 1 1.06 1.06l-3.25 3.25a.749.749 0 0 1-1.06 0L4.22 6.779a.749.749 0 1 1 1.06-1.06l1.97 1.97Z"/></svg>
+                                  tar.gz
+                                </a>
+                              </div>` : ''}
                             </div>
                           </td>
                         </tr>` : ''}

@@ -1,11 +1,16 @@
 package api
 
 import (
+	"archive/tar"
+	"archive/zip"
+	"compress/gzip"
 	"context"
 	"encoding/json"
 	"errors"
+	"fmt"
 	"io"
 	"io/fs"
+	"log"
 	"net/http"
 	"os"
 	"path/filepath"
@@ -126,6 +131,7 @@ func (h *Handler) RegisterRoutes(mux *http.ServeMux) {
 	mux.HandleFunc("GET /jobs", h.handleListJobs)
 	mux.HandleFunc("GET /status/{job_id}", h.handleStatus)
 	mux.HandleFunc("GET /results/{job_id}", h.handleResults)
+	mux.HandleFunc("GET /results/{job_id}/download", h.handleDownload)
 	mux.HandleFunc("GET /results/{job_id}/tree", h.handleTree)
 	mux.HandleFunc("GET /results/{job_id}/file", h.handleFile)
 	mux.HandleFunc("GET /results/{job_id}/search", h.handleSearch)
@@ -395,6 +401,178 @@ func (h *Handler) handleResults(w http.ResponseWriter, r *http.Request) {
 	}
 
 	writeJSON(w, http.StatusOK, resp)
+}
+
+// ---------------------------------------------------------------------------
+// GET /results/{job_id}/download?format=zip|tar.gz
+// ---------------------------------------------------------------------------
+
+// handleDownload streams the full results directory as a zip or tar.gz archive.
+//
+// @Summary      Download job results as archive
+// @Description  Streams the complete output directory for a completed job as a zip (default) or tar.gz archive
+// @Tags         jobs
+// @Produce      application/zip
+// @Param        job_id  path   string  true   "Job UUID"
+// @Param        format  query  string  false  "Archive format: zip (default) or tar.gz"
+// @Success      200  {file}   binary  "Archive file"
+// @Failure      400  {object} map[string]string  "invalid job_id or format"
+// @Failure      404  {object} map[string]string  "job not found or no results"
+// @Failure      409  {object} map[string]string  "job not complete"
+// @Failure      500  {object} map[string]string  "error"
+// @Router       /results/{job_id}/download [get]
+func (h *Handler) handleDownload(w http.ResponseWriter, r *http.Request) {
+	jobID, err := parseJobID(r)
+	if err != nil {
+		writeError(w, http.StatusBadRequest, "invalid job_id")
+		return
+	}
+
+	job, err := h.store.GetJob(r.Context(), jobID)
+	if err != nil {
+		if errors.Is(err, pgx.ErrNoRows) {
+			writeError(w, http.StatusNotFound, "job not found")
+			return
+		}
+		writeError(w, http.StatusInternalServerError, "failed to get job")
+		return
+	}
+
+	if job.Status != "complete" {
+		writeError(w, http.StatusConflict, "job is not complete (status: "+job.Status+")")
+		return
+	}
+
+	resultsDir := filepath.Join(h.dataDir, "output", jobID.String())
+	if _, err := os.Stat(resultsDir); os.IsNotExist(err) {
+		writeError(w, http.StatusNotFound, "results directory not found")
+		return
+	}
+
+	format := r.URL.Query().Get("format")
+	if format == "" {
+		format = "zip"
+	}
+	if format != "zip" && format != "tar.gz" {
+		writeError(w, http.StatusBadRequest, "format must be zip or tar.gz")
+		return
+	}
+
+	// Build a filename from package info when available, fall back to job ID.
+	baseName := jobID.String()
+	if job.PackageName != "" {
+		baseName = job.PackageName
+		if job.Version != "" {
+			baseName += "-" + job.Version
+		}
+	}
+
+	// Give large archives up to 10 minutes to stream before the connection
+	// is cut, overriding the server-wide WriteTimeout for this request only.
+	rc := http.NewResponseController(w)
+	if err := rc.SetWriteDeadline(time.Now().Add(10 * time.Minute)); err != nil {
+		// Not fatal — the server-level timeout still applies.
+		log.Printf("download: set write deadline: %v", err)
+	}
+
+	switch format {
+	case "zip":
+		w.Header().Set("Content-Type", "application/zip")
+		w.Header().Set("Content-Disposition", fmt.Sprintf(`attachment; filename="%s.zip"`, baseName))
+		if err := streamZip(w, resultsDir); err != nil {
+			log.Printf("download: stream zip for job %s: %v", jobID, err)
+		}
+	case "tar.gz":
+		w.Header().Set("Content-Type", "application/gzip")
+		w.Header().Set("Content-Disposition", fmt.Sprintf(`attachment; filename="%s.tar.gz"`, baseName))
+		if err := streamTarGz(w, resultsDir); err != nil {
+			log.Printf("download: stream tar.gz for job %s: %v", jobID, err)
+		}
+	}
+}
+
+// streamZip writes all files under rootDir into a zip archive streamed to w.
+func streamZip(w io.Writer, rootDir string) error {
+	zw := zip.NewWriter(w)
+	defer zw.Close()
+
+	return filepath.WalkDir(rootDir, func(path string, d fs.DirEntry, err error) error {
+		if err != nil || d.IsDir() {
+			return nil
+		}
+		rel, err := filepath.Rel(rootDir, path)
+		if err != nil {
+			return nil
+		}
+
+		info, err := d.Info()
+		if err != nil {
+			return nil
+		}
+
+		hdr, err := zip.FileInfoHeader(info)
+		if err != nil {
+			return nil
+		}
+		hdr.Name = rel
+		hdr.Method = zip.Deflate
+
+		fw, err := zw.CreateHeader(hdr)
+		if err != nil {
+			return err
+		}
+
+		f, err := os.Open(path)
+		if err != nil {
+			return nil
+		}
+		defer f.Close()
+
+		_, err = io.Copy(fw, f)
+		return err
+	})
+}
+
+// streamTarGz writes all files under rootDir into a gzipped tar archive streamed to w.
+func streamTarGz(w io.Writer, rootDir string) error {
+	gw := gzip.NewWriter(w)
+	defer gw.Close()
+	tw := tar.NewWriter(gw)
+	defer tw.Close()
+
+	return filepath.WalkDir(rootDir, func(path string, d fs.DirEntry, err error) error {
+		if err != nil || d.IsDir() {
+			return nil
+		}
+		rel, err := filepath.Rel(rootDir, path)
+		if err != nil {
+			return nil
+		}
+
+		info, err := d.Info()
+		if err != nil {
+			return nil
+		}
+
+		hdr := &tar.Header{
+			Name:    rel,
+			Size:    info.Size(),
+			Mode:    int64(info.Mode()),
+			ModTime: info.ModTime(),
+		}
+		if err := tw.WriteHeader(hdr); err != nil {
+			return err
+		}
+
+		f, err := os.Open(path)
+		if err != nil {
+			return nil
+		}
+		defer f.Close()
+
+		_, err = io.Copy(tw, f)
+		return err
+	})
 }
 
 // ---------------------------------------------------------------------------
