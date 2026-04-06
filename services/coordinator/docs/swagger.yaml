@@ -1,0 +1,362 @@
+basePath: /
+definitions:
+  api.MetaInfo:
+    properties:
+      activities:
+        items:
+          type: string
+        type: array
+      min_sdk:
+        type: integer
+      package_name:
+        type: string
+      permissions:
+        items:
+          type: string
+        type: array
+      receivers:
+        items:
+          type: string
+        type: array
+      services:
+        items:
+          type: string
+        type: array
+      target_sdk:
+        type: integer
+      version:
+        type: string
+      version_code:
+        type: integer
+    type: object
+  api.MobSFInfo:
+    properties:
+      report: {}
+      status:
+        type: string
+    type: object
+  api.ResultsResponse:
+    properties:
+      apktool:
+        $ref: '#/definitions/api.ToolInfo'
+      jadx:
+        $ref: '#/definitions/api.ToolInfo'
+      job_id:
+        type: string
+      metadata:
+        $ref: '#/definitions/api.MetaInfo'
+      mobsf:
+        $ref: '#/definitions/api.MobSFInfo'
+      package_name:
+        type: string
+      results_path:
+        type: string
+      status:
+        type: string
+    type: object
+  api.SearchMatch:
+    properties:
+      context:
+        type: string
+      file:
+        type: string
+      line:
+        type: integer
+    type: object
+  api.SearchResponse:
+    properties:
+      matches:
+        items:
+          $ref: '#/definitions/api.SearchMatch'
+        type: array
+      query:
+        type: string
+      truncated:
+        type: boolean
+    type: object
+  api.StatusResponse:
+    properties:
+      apktool_status:
+        type: string
+      completed_at:
+        type: string
+      error:
+        type: string
+      jadx_status:
+        type: string
+      job_id:
+        type: string
+      mobsf_status:
+        type: string
+      package_name:
+        type: string
+      results_path:
+        type: string
+      sha256:
+        type: string
+      source:
+        type: string
+      started_at:
+        type: string
+      status:
+        type: string
+      submitted_at:
+        type: string
+      version:
+        type: string
+    type: object
+  api.ToolInfo:
+    properties:
+      path:
+        type: string
+      status:
+        type: string
+    type: object
+  api.TreeEntry:
+    properties:
+      name:
+        type: string
+      size:
+        type: integer
+      type:
+        type: string
+    type: object
+  api.TreeResponse:
+    properties:
+      entries:
+        items:
+          $ref: '#/definitions/api.TreeEntry'
+        type: array
+      path:
+        type: string
+    type: object
+host: coordinator.apps.blj.wtf
+info:
+  contact: {}
+  description: Tracks analysis jobs and serves decompiled APK results.
+  title: Android RE Pipeline — Coordinator API
+  version: "1.0"
+paths:
+  /health:
+    get:
+      produces:
+      - application/json
+      responses:
+        "200":
+          description: OK
+          schema:
+            additionalProperties:
+              type: string
+            type: object
+      summary: Health check
+      tags:
+      - system
+  /results/{job_id}:
+    get:
+      description: Returns analysis results for a completed job, including tool outputs
+        and APK metadata
+      parameters:
+      - description: Job UUID
+        in: path
+        name: job_id
+        required: true
+        type: string
+      produces:
+      - application/json
+      responses:
+        "200":
+          description: OK
+          schema:
+            $ref: '#/definitions/api.ResultsResponse'
+        "400":
+          description: invalid job_id
+          schema:
+            additionalProperties:
+              type: string
+            type: object
+        "404":
+          description: job not found
+          schema:
+            additionalProperties:
+              type: string
+            type: object
+        "409":
+          description: job not complete
+          schema:
+            additionalProperties:
+              type: string
+            type: object
+        "500":
+          description: error
+          schema:
+            additionalProperties:
+              type: string
+            type: object
+      summary: Get job results
+      tags:
+      - jobs
+  /results/{job_id}/file:
+    get:
+      description: 'Returns the contents of a file within the job''s output directory.
+        Files larger than 100 KB are truncated; the X-Truncated: true header is set
+        in that case.'
+      parameters:
+      - description: Job UUID
+        in: path
+        name: job_id
+        required: true
+        type: string
+      - description: Relative file path within the output directory
+        in: query
+        name: path
+        required: true
+        type: string
+      produces:
+      - text/plain
+      responses:
+        "200":
+          description: File contents
+          schema:
+            type: string
+        "400":
+          description: invalid job_id or path
+          schema:
+            additionalProperties:
+              type: string
+            type: object
+        "404":
+          description: file not found
+          schema:
+            additionalProperties:
+              type: string
+            type: object
+        "500":
+          description: error
+          schema:
+            additionalProperties:
+              type: string
+            type: object
+      summary: Retrieve a file from job output
+      tags:
+      - jobs
+  /results/{job_id}/search:
+    get:
+      description: Performs a substring search across .java, .smali, .xml, and .json
+        files in the job's output directory
+      parameters:
+      - description: Job UUID
+        in: path
+        name: job_id
+        required: true
+        type: string
+      - description: Search query string
+        in: query
+        name: q
+        required: true
+        type: string
+      - description: Maximum number of results (default 50, max 200)
+        in: query
+        name: max
+        type: integer
+      produces:
+      - application/json
+      responses:
+        "200":
+          description: OK
+          schema:
+            $ref: '#/definitions/api.SearchResponse'
+        "400":
+          description: invalid job_id or missing query
+          schema:
+            additionalProperties:
+              type: string
+            type: object
+        "500":
+          description: error
+          schema:
+            additionalProperties:
+              type: string
+            type: object
+      summary: Search within job output files
+      tags:
+      - jobs
+  /results/{job_id}/tree:
+    get:
+      description: Lists files and subdirectories under the job's output directory
+        at the given relative path
+      parameters:
+      - description: Job UUID
+        in: path
+        name: job_id
+        required: true
+        type: string
+      - description: Relative path within the output directory
+        in: query
+        name: path
+        type: string
+      produces:
+      - application/json
+      responses:
+        "200":
+          description: OK
+          schema:
+            $ref: '#/definitions/api.TreeResponse'
+        "400":
+          description: invalid job_id or path
+          schema:
+            additionalProperties:
+              type: string
+            type: object
+        "404":
+          description: path not found
+          schema:
+            additionalProperties:
+              type: string
+            type: object
+        "500":
+          description: error
+          schema:
+            additionalProperties:
+              type: string
+            type: object
+      summary: List directory tree
+      tags:
+      - jobs
+  /status/{job_id}:
+    get:
+      description: Returns the current status of an analysis job
+      parameters:
+      - description: Job UUID
+        in: path
+        name: job_id
+        required: true
+        type: string
+      produces:
+      - application/json
+      responses:
+        "200":
+          description: OK
+          schema:
+            $ref: '#/definitions/api.StatusResponse'
+        "400":
+          description: invalid job_id
+          schema:
+            additionalProperties:
+              type: string
+            type: object
+        "404":
+          description: job not found
+          schema:
+            additionalProperties:
+              type: string
+            type: object
+        "500":
+          description: error
+          schema:
+            additionalProperties:
+              type: string
+            type: object
+      summary: Get job status
+      tags:
+      - jobs
+swagger: "2.0"

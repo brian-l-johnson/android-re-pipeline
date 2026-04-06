@@ -1,0 +1,103 @@
+basePath: /
+definitions:
+  api.DownloadRequest:
+    properties:
+      identifier:
+        type: string
+      source:
+        type: string
+    type: object
+host: ingestion.apps.blj.wtf
+info:
+  contact: {}
+  description: Accepts APK submissions and queues them for analysis.
+  title: Android RE Pipeline — Ingestion API
+  version: "1.0"
+paths:
+  /download:
+    post:
+      consumes:
+      - application/json
+      description: Downloads an APK from a URL and queues it for analysis. Synchronous
+        — blocks until download completes.
+      parameters:
+      - description: Download request
+        in: body
+        name: request
+        required: true
+        schema:
+          $ref: '#/definitions/api.DownloadRequest'
+      produces:
+      - application/json
+      responses:
+        "201":
+          description: job_id
+          schema:
+            additionalProperties:
+              type: string
+            type: object
+        "400":
+          description: error
+          schema:
+            additionalProperties:
+              type: string
+            type: object
+        "500":
+          description: error
+          schema:
+            additionalProperties:
+              type: string
+            type: object
+      summary: Download and queue an APK
+      tags:
+      - ingestion
+  /health:
+    get:
+      produces:
+      - application/json
+      responses:
+        "200":
+          description: OK
+          schema:
+            additionalProperties:
+              type: string
+            type: object
+      summary: Health check
+      tags:
+      - system
+  /upload:
+    post:
+      consumes:
+      - multipart/form-data
+      description: Accepts a multipart APK upload, writes to PVC, publishes to NATS
+      parameters:
+      - description: APK file
+        in: formData
+        name: file
+        required: true
+        type: file
+      produces:
+      - application/json
+      responses:
+        "201":
+          description: job_id
+          schema:
+            additionalProperties:
+              type: string
+            type: object
+        "400":
+          description: error
+          schema:
+            additionalProperties:
+              type: string
+            type: object
+        "500":
+          description: error
+          schema:
+            additionalProperties:
+              type: string
+            type: object
+      summary: Upload an APK file
+      tags:
+      - ingestion
+swagger: "2.0"
