@@ -10,7 +10,6 @@ package main
 
 import (
 	"context"
-	"database/sql"
 	"fmt"
 	"log"
 	"net/http"
@@ -20,8 +19,9 @@ import (
 	"time"
 
 	"github.com/google/uuid"
+	"github.com/jackc/pgx/v5"
+	"github.com/jackc/pgx/v5/stdlib"
 	"github.com/pressly/goose/v3"
-	_ "github.com/jackc/pgx/v5/stdlib"
 	httpSwagger "github.com/swaggo/http-swagger"
 
 	"github.com/brian-l-johnson/android-re-pipeline/services/coordinator/internal/api"
@@ -166,11 +166,14 @@ func main() {
 }
 
 // runMigrations runs all pending Goose migrations against the given database.
+// Uses pgx.ParseConfig so both URL (postgres://...) and key=value DSN formats
+// are accepted.
 func runMigrations(databaseURL, migrationsDir string) error {
-	db, err := sql.Open("pgx", databaseURL)
+	connConfig, err := pgx.ParseConfig(databaseURL)
 	if err != nil {
-		return fmt.Errorf("open sql db: %w", err)
+		return fmt.Errorf("parse database URL: %w", err)
 	}
+	db := stdlib.OpenDB(*connConfig)
 	defer db.Close()
 
 	if err := goose.SetDialect("postgres"); err != nil {
