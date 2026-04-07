@@ -6,18 +6,22 @@ import (
 	"encoding/json"
 	"fmt"
 	"io"
+	"log"
 	"mime/multipart"
 	"net/http"
 	"os"
 	"path/filepath"
+	"strings"
 	"time"
 )
 
 const (
-	pollInterval  = 10 * time.Second
-	scanTimeout   = 30 * time.Minute
-	uploadTimeout = 5 * time.Minute
-	apiTimeout    = 30 * time.Second
+	pollInterval        = 10 * time.Second
+	statusCheckInterval = 2 * time.Minute // how often to probe /api/v1/scans
+	uploadTimeout       = 5 * time.Minute
+	apiTimeout          = 30 * time.Second
+	scanSearchPages     = 5  // max pages to search when looking for a hash
+	scanPageSize        = 10 // entries per page
 )
 
 // Client calls the MobSF REST API.
@@ -42,6 +46,13 @@ func NewClient(baseURL, apiKey string) *Client {
 // ScanResult holds the raw JSON report returned by MobSF.
 type ScanResult struct {
 	Report json.RawMessage
+}
+
+// ScanStatus describes the current state of a MobSF scan as reported by
+// /api/v1/scans. Found=false means the hash was not present in the scan list.
+type ScanStatus struct {
+	Found    bool
+	HasError bool // true if MobSF logged an exception for this scan
 }
 
 // Upload sends an APK file to MobSF and returns the scan hash.
@@ -97,36 +108,116 @@ func (c *Client) Upload(ctx context.Context, apkPath string) (string, error) {
 	return result.Hash, nil
 }
 
-// PollScan kicks off a scan for scanHash and polls until completion or timeout.
+// PollScan kicks off a scan for scanHash and polls until MobSF reports
+// completion. No wall-clock timeout is imposed; instead, every
+// statusCheckInterval the /api/v1/scans endpoint is queried to check whether
+// MobSF itself considers the scan failed. An error is returned only if:
+//   - the context is cancelled
+//   - MobSF logs an exception for the scan
+//   - the scan disappears from MobSF's scan list entirely
 func (c *Client) PollScan(ctx context.Context, scanHash string) (*ScanResult, error) {
-	// Kick off the scan
 	if err := c.startScan(ctx, scanHash); err != nil {
 		return nil, fmt.Errorf("start scan: %w", err)
 	}
 
-	deadline := time.Now().Add(scanTimeout)
-	ticker := time.NewTicker(pollInterval)
-	defer ticker.Stop()
+	pollTicker := time.NewTicker(pollInterval)
+	defer pollTicker.Stop()
+	statusTicker := time.NewTicker(statusCheckInterval)
+	defer statusTicker.Stop()
 
 	for {
 		select {
 		case <-ctx.Done():
 			return nil, ctx.Err()
-		case t := <-ticker.C:
-			if t.After(deadline) {
-				return nil, fmt.Errorf("scan timed out after %s", scanTimeout)
-			}
 
+		case <-pollTicker.C:
 			report, done, err := c.tryGetReport(ctx, scanHash)
 			if err != nil {
-				// Transient error — keep polling
+				// Transient network/API error — keep polling.
+				log.Printf("mobsf: transient poll error (hash=%s): %v", scanHash, err)
 				continue
 			}
 			if done {
 				return &ScanResult{Report: report}, nil
 			}
+
+		case <-statusTicker.C:
+			status, err := c.GetScanStatus(ctx, scanHash)
+			if err != nil {
+				// Transient — don't fail the scan over a status check blip.
+				log.Printf("mobsf: status check error (hash=%s): %v", scanHash, err)
+				continue
+			}
+			if !status.Found {
+				return nil, fmt.Errorf("scan %s not found in MobSF scan list (deleted?)", scanHash)
+			}
+			if status.HasError {
+				return nil, fmt.Errorf("MobSF reported a scan failure for hash %s", scanHash)
+			}
+			log.Printf("mobsf: scan %s still in progress", scanHash)
 		}
 	}
+}
+
+// GetScanStatus queries /api/v1/scans (newest-first) for scanHash and returns
+// its current status. It searches up to scanSearchPages pages.
+//
+// MobSF stores SCAN_LOGS as a Python-formatted list of dicts, e.g.
+//
+//	[{'timestamp': '...', 'status': 'Generating Hashes', 'exception': None}, ...]
+//
+// A scan has an error if any log entry has a non-None exception value.
+func (c *Client) GetScanStatus(ctx context.Context, scanHash string) (*ScanStatus, error) {
+	for page := 1; page <= scanSearchPages; page++ {
+		apiCtx, cancel := context.WithTimeout(ctx, apiTimeout)
+		url := fmt.Sprintf("%s/api/v1/scans?page=%d&page_size=%d", c.baseURL, page, scanPageSize)
+		req, err := http.NewRequestWithContext(apiCtx, http.MethodGet, url, nil)
+		if err != nil {
+			cancel()
+			return nil, fmt.Errorf("build scans request: %w", err)
+		}
+		req.Header.Set("Authorization", c.apiKey)
+
+		resp, err := c.http.Do(req)
+		if err != nil {
+			cancel()
+			return nil, fmt.Errorf("scans request: %w", err)
+		}
+
+		var payload struct {
+			Content []struct {
+				MD5      string `json:"MD5"`
+				ScanLogs string `json:"SCAN_LOGS"`
+			} `json:"content"`
+			NumPages int `json:"num_pages"`
+		}
+		decodeErr := json.NewDecoder(resp.Body).Decode(&payload)
+		resp.Body.Close()
+		cancel()
+		if decodeErr != nil {
+			return nil, fmt.Errorf("decode scans response: %w", decodeErr)
+		}
+
+		for _, entry := range payload.Content {
+			if entry.MD5 != scanHash {
+				continue
+			}
+			// Detect real exceptions: count total 'exception': occurrences vs
+			// 'exception': None occurrences. If they differ, at least one entry
+			// has a non-None exception.
+			total := strings.Count(entry.ScanLogs, "'exception':")
+			nones := strings.Count(entry.ScanLogs, "'exception': None")
+			return &ScanStatus{
+				Found:    true,
+				HasError: total > 0 && total != nones,
+			}, nil
+		}
+
+		if page >= payload.NumPages {
+			break
+		}
+	}
+	return &ScanStatus{Found: false}, nil
 }
 
 func (c *Client) startScan(ctx context.Context, scanHash string) error {
@@ -176,7 +267,7 @@ func (c *Client) tryGetReport(ctx context.Context, scanHash string) (json.RawMes
 	}
 	defer resp.Body.Close()
 
-	// MobSF returns 404 while the scan is still running
+	// MobSF returns 404 while the scan is still running.
 	if resp.StatusCode == http.StatusNotFound {
 		return nil, false, nil
 	}
