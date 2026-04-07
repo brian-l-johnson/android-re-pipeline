@@ -198,6 +198,37 @@ func (o *Orchestrator) ReconcilePendingMobSF(jobs []store.Job) {
 	}
 }
 
+// RetriggerMobSF resets mobsf_status to 'pending' and relaunches the MobSF
+// scan goroutine. Returns an error if MobSF is already running for this job.
+func (o *Orchestrator) RetriggerMobSF(ctx context.Context, job *store.Job) error {
+	if job.MobSFStatus == "running" {
+		return fmt.Errorf("mobsf scan already in progress")
+	}
+	if err := o.store.ResetJobMobSF(ctx, job.ID); err != nil {
+		return fmt.Errorf("reset mobsf status: %w", err)
+	}
+	log.Printf("orchestrator: retriggering MobSF for job %s", job.ID)
+	go o.runMobSF(job.ID, job.APKPath)
+	return nil
+}
+
+// RetriggerJob resets a failed job back to running and re-creates the k8s
+// analysis jobs for jadx and apktool (MobSF will follow once they complete).
+func (o *Orchestrator) RetriggerJob(ctx context.Context, job *store.Job) error {
+	if job.Status == "running" {
+		return fmt.Errorf("job is already running")
+	}
+	if err := o.store.ResetJobForRetrigger(ctx, job.ID); err != nil {
+		return fmt.Errorf("reset job: %w", err)
+	}
+	if err := o.manager.CreateAnalysisJobs(ctx, job.ID, job.APKPath); err != nil {
+		_ = o.store.SetJobError(ctx, job.ID, fmt.Sprintf("retrigger: create k8s jobs: %v", err))
+		return fmt.Errorf("create k8s jobs: %w", err)
+	}
+	log.Printf("orchestrator: job %s retriggered", job.ID)
+	return nil
+}
+
 // ---------------------------------------------------------------------------
 // Internal helpers
 // ---------------------------------------------------------------------------

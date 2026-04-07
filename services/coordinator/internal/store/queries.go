@@ -286,6 +286,42 @@ func (s *Store) ListJobsPendingMobSF(ctx context.Context) ([]Job, error) {
 	return jobs, nil
 }
 
+// ResetJobMobSF clears the mobsf_status back to 'pending' and wipes any
+// previous report so MobSF can be re-run on an already-complete job.
+func (s *Store) ResetJobMobSF(ctx context.Context, jobID uuid.UUID) error {
+	_, err := s.pool.Exec(ctx, `
+		UPDATE jobs SET mobsf_status = 'pending', mobsf_report = NULL
+		WHERE id = $1`,
+		jobID,
+	)
+	if err != nil {
+		return fmt.Errorf("reset job mobsf: %w", err)
+	}
+	return nil
+}
+
+// ResetJobForRetrigger resets a failed job to running with all tool statuses
+// back to pending so the full analysis pipeline can be re-run.
+func (s *Store) ResetJobForRetrigger(ctx context.Context, jobID uuid.UUID) error {
+	_, err := s.pool.Exec(ctx, `
+		UPDATE jobs SET
+			status         = 'running',
+			error          = NULL,
+			completed_at   = NULL,
+			results_path   = NULL,
+			jadx_status    = 'pending',
+			apktool_status = 'pending',
+			mobsf_status   = 'pending',
+			mobsf_report   = NULL
+		WHERE id = $1`,
+		jobID,
+	)
+	if err != nil {
+		return fmt.Errorf("reset job for retrigger: %w", err)
+	}
+	return nil
+}
+
 // CountJobs returns the total number of jobs in the database.
 func (s *Store) CountJobs(ctx context.Context) (int, error) {
 	var count int

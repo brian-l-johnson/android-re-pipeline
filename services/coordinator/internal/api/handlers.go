@@ -12,6 +12,7 @@ import (
 	"io/fs"
 	"log"
 	"net/http"
+	"runtime"
 	"os"
 	"path/filepath"
 	"strconv"
@@ -23,6 +24,12 @@ import (
 
 	"github.com/brian-l-johnson/android-re-pipeline/services/coordinator/internal/store"
 )
+
+// JobRetriggerer is the subset of pipeline.Orchestrator used by the HTTP handler.
+type JobRetriggerer interface {
+	RetriggerMobSF(ctx context.Context, job *store.Job) error
+	RetriggerJob(ctx context.Context, job *store.Job) error
+}
 
 const (
 	maxFileServeSize = 100 * 1024 // 100 KB
@@ -118,11 +125,12 @@ type SearchResponse struct {
 type Handler struct {
 	store   *store.Store
 	dataDir string
+	orch    JobRetriggerer
 }
 
 // NewHandler creates a Handler with the given store and data directory.
-func NewHandler(s *store.Store, dataDir string) *Handler {
-	return &Handler{store: s, dataDir: dataDir}
+func NewHandler(s *store.Store, dataDir string, orch JobRetriggerer) *Handler {
+	return &Handler{store: s, dataDir: dataDir, orch: orch}
 }
 
 // RegisterRoutes registers all coordinator API routes on mux.
@@ -135,6 +143,7 @@ func (h *Handler) RegisterRoutes(mux *http.ServeMux) {
 	mux.HandleFunc("GET /results/{job_id}/tree", h.handleTree)
 	mux.HandleFunc("GET /results/{job_id}/file", h.handleFile)
 	mux.HandleFunc("GET /results/{job_id}/search", h.handleSearch)
+	mux.HandleFunc("POST /jobs/{job_id}/retrigger", h.handleRetrigger)
 }
 
 // ---------------------------------------------------------------------------
@@ -249,7 +258,90 @@ func (h *Handler) handleListJobs(w http.ResponseWriter, r *http.Request) {
 // @Success      200  {object}  map[string]string
 // @Router       /health [get]
 func (h *Handler) handleHealth(w http.ResponseWriter, r *http.Request) {
-	writeJSON(w, http.StatusOK, map[string]string{"status": "ok"})
+	var m runtime.MemStats
+	runtime.ReadMemStats(&m)
+
+	mb := func(b uint64) float64 { return float64(b) / 1024 / 1024 }
+
+	writeJSON(w, http.StatusOK, map[string]interface{}{
+		"status": "ok",
+		"mem": map[string]interface{}{
+			"heap_alloc_mb":  mb(m.HeapAlloc),
+			"heap_inuse_mb":  mb(m.HeapInuse),
+			"heap_sys_mb":    mb(m.HeapSys),
+			"stack_inuse_mb": mb(m.StackInuse),
+			"sys_mb":         mb(m.Sys),
+			"gc_cycles":      m.NumGC,
+			"next_gc_mb":     mb(m.NextGC),
+		},
+	})
+}
+
+// ---------------------------------------------------------------------------
+// POST /jobs/{job_id}/retrigger
+// ---------------------------------------------------------------------------
+
+// handleRetrigger re-queues analysis for a job whose tools have failed or
+// whose MobSF scan did not complete.
+//
+// Decision logic:
+//   - If jadx or apktool failed → full retrigger (reset + re-create k8s jobs)
+//   - If only mobsf failed/pending and jadx+apktool are complete → MobSF only
+//   - Otherwise → 409
+//
+// @Summary      Retrigger a job
+// @Tags         jobs
+// @Param        job_id  path  string  true  "Job UUID"
+// @Success      202  {object}  map[string]string  "triggered"
+// @Failure      400  {object}  map[string]string  "invalid job_id"
+// @Failure      404  {object}  map[string]string  "job not found"
+// @Failure      409  {object}  map[string]string  "nothing to retrigger"
+// @Failure      500  {object}  map[string]string  "error"
+// @Router       /jobs/{job_id}/retrigger [post]
+func (h *Handler) handleRetrigger(w http.ResponseWriter, r *http.Request) {
+	jobID, err := parseJobID(r)
+	if err != nil {
+		writeError(w, http.StatusBadRequest, "invalid job_id")
+		return
+	}
+
+	job, err := h.store.GetJob(r.Context(), jobID)
+	if err != nil {
+		if errors.Is(err, pgx.ErrNoRows) {
+			writeError(w, http.StatusNotFound, "job not found")
+			return
+		}
+		writeError(w, http.StatusInternalServerError, "failed to get job")
+		return
+	}
+
+	toolsFailed := job.JadxStatus == "failed" || job.ApktoolStatus == "failed"
+	mobsfRetrigger := !toolsFailed &&
+		job.JadxStatus == "complete" && job.ApktoolStatus == "complete" &&
+		(job.MobSFStatus == "failed" || job.MobSFStatus == "pending")
+
+	switch {
+	case toolsFailed || job.Status == "failed":
+		if job.Status == "running" {
+			writeError(w, http.StatusConflict, "job is still running")
+			return
+		}
+		if err := h.orch.RetriggerJob(r.Context(), job); err != nil {
+			writeError(w, http.StatusInternalServerError, "retrigger failed: "+err.Error())
+			return
+		}
+		writeJSON(w, http.StatusAccepted, map[string]string{"triggered": "full"})
+
+	case mobsfRetrigger:
+		if err := h.orch.RetriggerMobSF(r.Context(), job); err != nil {
+			writeError(w, http.StatusConflict, err.Error())
+			return
+		}
+		writeJSON(w, http.StatusAccepted, map[string]string{"triggered": "mobsf"})
+
+	default:
+		writeError(w, http.StatusConflict, "nothing to retrigger (job status: "+job.Status+", mobsf: "+job.MobSFStatus+")")
+	}
 }
 
 // ---------------------------------------------------------------------------

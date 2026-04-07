@@ -142,7 +142,7 @@ func main() {
 	// -----------------------------------------------------------------------
 	// HTTP server
 	// -----------------------------------------------------------------------
-	h := api.NewHandler(s, dataDir)
+	h := api.NewHandler(s, dataDir, orch)
 	mux := http.NewServeMux()
 	h.RegisterRoutes(mux)
 	mux.Handle("GET /swagger/", httpSwagger.WrapHandler)

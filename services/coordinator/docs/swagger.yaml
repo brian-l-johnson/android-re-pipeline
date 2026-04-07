@@ -220,6 +220,48 @@ paths:
       summary: List all jobs
       tags:
       - jobs
+  /jobs/{job_id}/retrigger:
+    post:
+      parameters:
+      - description: Job UUID
+        in: path
+        name: job_id
+        required: true
+        type: string
+      responses:
+        "202":
+          description: triggered
+          schema:
+            additionalProperties:
+              type: string
+            type: object
+        "400":
+          description: invalid job_id
+          schema:
+            additionalProperties:
+              type: string
+            type: object
+        "404":
+          description: job not found
+          schema:
+            additionalProperties:
+              type: string
+            type: object
+        "409":
+          description: nothing to retrigger
+          schema:
+            additionalProperties:
+              type: string
+            type: object
+        "500":
+          description: error
+          schema:
+            additionalProperties:
+              type: string
+            type: object
+      summary: Retrigger a job
+      tags:
+      - jobs
   /results/{job_id}:
     get:
       description: Returns analysis results for a completed job, including tool outputs
