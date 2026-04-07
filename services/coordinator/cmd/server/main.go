@@ -101,6 +101,18 @@ func main() {
 	}
 	log.Println("reconciliation complete")
 
+	// Recover jobs that were marked complete but whose MobSF goroutine never
+	// ran (e.g. coordinator restarted between SetJobCompleted and runMobSF).
+	log.Println("reconciling pending MobSF scans...")
+	pendingMobSF, err := s.ListJobsPendingMobSF(bgCtx)
+	if err != nil {
+		log.Printf("warn: list jobs pending mobsf: %v", err)
+	} else if len(pendingMobSF) > 0 {
+		log.Printf("found %d job(s) with pending MobSF scan, relaunching...", len(pendingMobSF))
+		orch.ReconcilePendingMobSF(pendingMobSF)
+	}
+	log.Println("MobSF reconciliation complete")
+
 	// -----------------------------------------------------------------------
 	// Start background workers
 	// -----------------------------------------------------------------------

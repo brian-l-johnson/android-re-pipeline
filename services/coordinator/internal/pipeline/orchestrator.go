@@ -188,6 +188,16 @@ func (o *Orchestrator) OnJobFailed(jobID uuid.UUID, tool string, logs string) {
 	log.Printf("orchestrator: tool %s failed for job %s: %s", tool, jobID, logs)
 }
 
+// ReconcilePendingMobSF relaunches MobSF for any jobs that are marked complete
+// but still have mobsf_status='pending'. This recovers jobs where the coordinator
+// restarted between marking the job complete and the MobSF goroutine finishing.
+func (o *Orchestrator) ReconcilePendingMobSF(jobs []store.Job) {
+	for _, job := range jobs {
+		log.Printf("orchestrator: reconcile — relaunching MobSF for job %s", job.ID)
+		go o.runMobSF(job.ID, job.APKPath)
+	}
+}
+
 // ---------------------------------------------------------------------------
 // Internal helpers
 // ---------------------------------------------------------------------------

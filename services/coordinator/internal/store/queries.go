@@ -255,6 +255,37 @@ func (s *Store) ListJobs(ctx context.Context, limit, offset int) ([]Job, error) 
 	return jobs, nil
 }
 
+// ListJobsPendingMobSF returns jobs that are complete (jadx+apktool done) but
+// still have mobsf_status='pending'. This can happen when the coordinator
+// restarts after marking a job complete but before the MobSF goroutine runs.
+func (s *Store) ListJobsPendingMobSF(ctx context.Context) ([]Job, error) {
+	rows, err := s.pool.Query(ctx, `
+		SELECT id, status, apk_path, package_name, version, source, sha256,
+		       submitted_at, started_at, completed_at, error, results_path,
+		       jadx_status, apktool_status, mobsf_status, mobsf_report
+		FROM jobs
+		WHERE status = 'complete'
+		  AND mobsf_status = 'pending'`,
+	)
+	if err != nil {
+		return nil, fmt.Errorf("list jobs pending mobsf: %w", err)
+	}
+	defer rows.Close()
+
+	var jobs []Job
+	for rows.Next() {
+		job, err := scanJob(rows)
+		if err != nil {
+			return nil, fmt.Errorf("scan job pending mobsf: %w", err)
+		}
+		jobs = append(jobs, *job)
+	}
+	if err := rows.Err(); err != nil {
+		return nil, fmt.Errorf("iterate jobs pending mobsf: %w", err)
+	}
+	return jobs, nil
+}
+
 // CountJobs returns the total number of jobs in the database.
 func (s *Store) CountJobs(ctx context.Context) (int, error) {
 	var count int
