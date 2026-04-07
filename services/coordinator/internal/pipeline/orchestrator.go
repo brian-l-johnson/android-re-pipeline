@@ -207,6 +207,14 @@ func (o *Orchestrator) RetriggerMobSF(ctx context.Context, job *store.Job) error
 	if err := o.store.ResetJobMobSF(ctx, job.ID); err != nil {
 		return fmt.Errorf("reset mobsf status: %w", err)
 	}
+	// If the job was previously marked failed solely because MobSF failed
+	// (old code behaviour), restore it to complete now that we're retrying.
+	if job.Status == "failed" {
+		resultsPath := fmt.Sprintf("%s/output/%s", o.dataDir, job.ID.String())
+		if err := o.store.SetJobCompleted(ctx, job.ID, resultsPath); err != nil {
+			log.Printf("orchestrator: restore job status for mobsf retrigger (job=%s): %v", job.ID, err)
+		}
+	}
 	log.Printf("orchestrator: retriggering MobSF for job %s", job.ID)
 	go o.runMobSF(job.ID, job.APKPath)
 	return nil

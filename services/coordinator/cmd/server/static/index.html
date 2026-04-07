@@ -364,17 +364,23 @@
                                     tar.gz
                                   </a>
                                 ` : ''}
-                                ${(j.status === 'failed' || j.jadx_status === 'failed' || j.apktool_status === 'failed') ? `
-                                  <button class="retrigger-btn full"
-                                    onclick="this.getRootNode().host._retrigger(event, '${j.job_id}')">
-                                    ↺ Retrigger
-                                  </button>
-                                ` : (j.mobsf_status === 'failed' || (j.jadx_status === 'complete' && j.apktool_status === 'complete' && j.mobsf_status === 'pending')) ? `
-                                  <button class="retrigger-btn mobsf"
-                                    onclick="this.getRootNode().host._retrigger(event, '${j.job_id}')">
-                                    ↺ Retrigger MobSF
-                                  </button>
-                                ` : ''}
+                                ${ (() => {
+                                  const toolsFailed = j.jadx_status === 'failed' || j.apktool_status === 'failed';
+                                  const mobsfOnly = !toolsFailed &&
+                                    j.jadx_status === 'complete' && j.apktool_status === 'complete' &&
+                                    (j.mobsf_status === 'failed' || j.mobsf_status === 'pending');
+                                  if (mobsfOnly) return `
+                                    <button class="retrigger-btn mobsf"
+                                      onclick="this.getRootNode().host._retrigger(event, '${j.job_id}')">
+                                      ↺ Retrigger MobSF
+                                    </button>`;
+                                  if (toolsFailed || j.status === 'failed') return `
+                                    <button class="retrigger-btn full"
+                                      onclick="this.getRootNode().host._retrigger(event, '${j.job_id}')">
+                                      ↺ Retrigger
+                                    </button>`;
+                                  return '';
+                                })() }
                               </div>
                             </div>
                           </td>

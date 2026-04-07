@@ -316,11 +316,21 @@ func (h *Handler) handleRetrigger(w http.ResponseWriter, r *http.Request) {
 	}
 
 	toolsFailed := job.JadxStatus == "failed" || job.ApktoolStatus == "failed"
+	// MobSF-only: jadx+apktool done, only mobsf needs a rerun. Check this
+	// first — a job can have status='failed' purely because MobSF failed under
+	// the old code, even though the static analysis tools completed fine.
 	mobsfRetrigger := !toolsFailed &&
 		job.JadxStatus == "complete" && job.ApktoolStatus == "complete" &&
 		(job.MobSFStatus == "failed" || job.MobSFStatus == "pending")
 
 	switch {
+	case mobsfRetrigger:
+		if err := h.orch.RetriggerMobSF(r.Context(), job); err != nil {
+			writeError(w, http.StatusConflict, err.Error())
+			return
+		}
+		writeJSON(w, http.StatusAccepted, map[string]string{"triggered": "mobsf"})
+
 	case toolsFailed || job.Status == "failed":
 		if job.Status == "running" {
 			writeError(w, http.StatusConflict, "job is still running")
@@ -331,13 +341,6 @@ func (h *Handler) handleRetrigger(w http.ResponseWriter, r *http.Request) {
 			return
 		}
 		writeJSON(w, http.StatusAccepted, map[string]string{"triggered": "full"})
-
-	case mobsfRetrigger:
-		if err := h.orch.RetriggerMobSF(r.Context(), job); err != nil {
-			writeError(w, http.StatusConflict, err.Error())
-			return
-		}
-		writeJSON(w, http.StatusAccepted, map[string]string{"triggered": "mobsf"})
 
 	default:
 		writeError(w, http.StatusConflict, "nothing to retrigger (job status: "+job.Status+", mobsf: "+job.MobSFStatus+")")
