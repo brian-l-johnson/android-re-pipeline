@@ -366,14 +366,16 @@
                                 ` : ''}
                                 ${ (() => {
                                   const toolsFailed = j.jadx_status === 'failed' || j.apktool_status === 'failed';
-                                  const mobsfOnly = !toolsFailed &&
+                                  const mobsfAvail = !toolsFailed &&
                                     j.jadx_status === 'complete' && j.apktool_status === 'complete' &&
-                                    (j.mobsf_status === 'failed' || j.mobsf_status === 'pending');
-                                  if (mobsfOnly) return `
-                                    <button class="retrigger-btn mobsf"
+                                    j.mobsf_status !== 'running';
+                                  if (mobsfAvail) {
+                                    const label = j.mobsf_status === 'complete' ? '↺ Re-run MobSF' : '↺ Retrigger MobSF';
+                                    return `<button class="retrigger-btn mobsf"
                                       onclick="this.getRootNode().host._retrigger(event, '${j.job_id}')">
-                                      ↺ Retrigger MobSF
+                                      ${label}
                                     </button>`;
+                                  }
                                   if (toolsFailed || j.status === 'failed') return `
                                     <button class="retrigger-btn full"
                                       onclick="this.getRootNode().host._retrigger(event, '${j.job_id}')">
