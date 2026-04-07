@@ -188,22 +188,42 @@ func (o *Orchestrator) OnJobFailed(jobID uuid.UUID, tool string, logs string) {
 	log.Printf("orchestrator: tool %s failed for job %s: %s", tool, jobID, logs)
 }
 
-// ReconcilePendingMobSF relaunches MobSF for any jobs that are marked complete
-// but still have mobsf_status='pending'. This recovers jobs where the coordinator
-// restarted between marking the job complete and the MobSF goroutine finishing.
+// ReconcilePendingMobSF recovers MobSF work that was interrupted by a
+// coordinator restart. It handles two cases per job:
+//
+//   - mobsf_status='pending': goroutine never started → run normally.
+//   - mobsf_status='running' with a stored scan hash: pod died mid-scan.
+//     Check whether MobSF already finished; if yes store the report, if no
+//     resume polling from the existing hash.
+//   - mobsf_status='running' with no stored hash: pod died before Upload()
+//     completed → reset to pending and run from scratch.
 func (o *Orchestrator) ReconcilePendingMobSF(jobs []store.Job) {
 	for _, job := range jobs {
-		log.Printf("orchestrator: reconcile — relaunching MobSF for job %s", job.ID)
-		go o.runMobSF(job.ID, job.APKPath)
+		job := job // capture for goroutine
+		if job.MobSFStatus == "pending" || job.MobSFScanHash == "" {
+			// No hash stored — either never started or died before upload.
+			// Reset to pending so runMobSF starts clean.
+			if job.MobSFStatus == "running" {
+				ctx := context.Background()
+				if err := o.store.UpdateJobToolStatus(ctx, job.ID, "mobsf", "pending"); err != nil {
+					log.Printf("orchestrator: reconcile reset mobsf status (job=%s): %v", job.ID, err)
+					continue
+				}
+			}
+			log.Printf("orchestrator: reconcile — launching MobSF for job %s", job.ID)
+			go o.runMobSF(job.ID, job.APKPath)
+			continue
+		}
+
+		// Has a scan hash: pod died during polling. Check if MobSF finished.
+		log.Printf("orchestrator: reconcile — resuming MobSF for job %s (hash=%s)", job.ID, job.MobSFScanHash)
+		go o.resumeMobSF(job.ID, job.MobSFScanHash)
 	}
 }
 
 // RetriggerMobSF resets mobsf_status to 'pending' and relaunches the MobSF
 // scan goroutine. Returns an error if MobSF is already running for this job.
 func (o *Orchestrator) RetriggerMobSF(ctx context.Context, job *store.Job) error {
-	if job.MobSFStatus == "running" {
-		return fmt.Errorf("mobsf scan already in progress")
-	}
 	if err := o.store.ResetJobMobSF(ctx, job.ID); err != nil {
 		return fmt.Errorf("reset mobsf status: %w", err)
 	}
@@ -292,6 +312,44 @@ func (o *Orchestrator) runMobSF(jobID uuid.UUID, apkPath string) {
 		return
 	}
 
+	// Persist the hash immediately so a coordinator restart can resume polling
+	// rather than re-uploading from scratch.
+	if err := o.store.SetMobSFScanHash(ctx, jobID, scanHash); err != nil {
+		log.Printf("orchestrator: store mobsf scan hash failed (job=%s): %v", jobID, err)
+	}
+
+	o.finishMobSF(ctx, jobID, scanHash)
+}
+
+// resumeMobSF is called on startup when a job was mid-scan (status=running,
+// hash stored). It checks if MobSF already finished; if not, it polls to completion.
+func (o *Orchestrator) resumeMobSF(jobID uuid.UUID, scanHash string) {
+	ctx := context.Background()
+
+	// Check if MobSF already has a completed report for this hash.
+	result, found, err := o.mobsf.CheckReport(ctx, scanHash)
+	if err != nil {
+		log.Printf("orchestrator: check existing mobsf report failed (job=%s): %v", jobID, err)
+	}
+	if found {
+		log.Printf("orchestrator: found existing MobSF report for job %s, storing", jobID)
+		if err := o.store.SetMobSFReport(ctx, jobID, result.Report); err != nil {
+			log.Printf("orchestrator: store mobsf report failed (job=%s): %v", jobID, err)
+		}
+		if err := o.store.UpdateJobToolStatus(ctx, jobID, "mobsf", "complete"); err != nil {
+			log.Printf("orchestrator: set mobsf complete failed (job=%s): %v", jobID, err)
+		}
+		log.Printf("orchestrator: mobsf complete (resumed) for job %s", jobID)
+		return
+	}
+
+	// Report not ready yet — poll to completion from the existing hash.
+	log.Printf("orchestrator: MobSF scan still in progress for job %s, resuming poll", jobID)
+	o.finishMobSF(ctx, jobID, scanHash)
+}
+
+// finishMobSF polls MobSF for a scan result and stores it when done.
+func (o *Orchestrator) finishMobSF(ctx context.Context, jobID uuid.UUID, scanHash string) {
 	result, err := o.mobsf.PollScan(ctx, scanHash)
 	if err != nil {
 		log.Printf("orchestrator: mobsf scan failed (job=%s): %v", jobID, err)

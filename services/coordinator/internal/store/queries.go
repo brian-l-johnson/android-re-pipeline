@@ -27,6 +27,7 @@ type Job struct {
 	JadxStatus    string
 	ApktoolStatus string
 	MobSFStatus   string
+	MobSFScanHash string
 	MobSFReport   json.RawMessage
 }
 
@@ -146,6 +147,20 @@ func (s *Store) SetJobCompleted(ctx context.Context, jobID uuid.UUID, resultsPat
 	return nil
 }
 
+// SetMobSFScanHash stores the MobSF scan hash returned by Upload so it can be
+// used to resume polling or check status after a coordinator restart.
+func (s *Store) SetMobSFScanHash(ctx context.Context, jobID uuid.UUID, hash string) error {
+	_, err := s.pool.Exec(ctx, `
+		UPDATE jobs SET mobsf_scan_hash = $2
+		WHERE id = $1`,
+		jobID, hash,
+	)
+	if err != nil {
+		return fmt.Errorf("set mobsf scan hash: %w", err)
+	}
+	return nil
+}
+
 // SetMobSFReport stores the MobSF JSON report for a job.
 func (s *Store) SetMobSFReport(ctx context.Context, jobID uuid.UUID, report json.RawMessage) error {
 	_, err := s.pool.Exec(ctx, `
@@ -164,7 +179,7 @@ func (s *Store) GetJob(ctx context.Context, jobID uuid.UUID) (*Job, error) {
 	row := s.pool.QueryRow(ctx, `
 		SELECT id, status, apk_path, package_name, version, source, sha256,
 		       submitted_at, started_at, completed_at, error, results_path,
-		       jadx_status, apktool_status, mobsf_status, mobsf_report
+		       jadx_status, apktool_status, mobsf_status, mobsf_scan_hash, mobsf_report
 		FROM jobs
 		WHERE id = $1`,
 		jobID,
@@ -182,7 +197,7 @@ func (s *Store) GetJobBySHA256(ctx context.Context, sha256 string) (*Job, error)
 	row := s.pool.QueryRow(ctx, `
 		SELECT id, status, apk_path, package_name, version, source, sha256,
 		       submitted_at, started_at, completed_at, error, results_path,
-		       jadx_status, apktool_status, mobsf_status, mobsf_report
+		       jadx_status, apktool_status, mobsf_status, mobsf_scan_hash, mobsf_report
 		FROM jobs
 		WHERE sha256 = $1
 		ORDER BY submitted_at DESC
@@ -202,7 +217,7 @@ func (s *Store) ListRunningJobs(ctx context.Context) ([]Job, error) {
 	rows, err := s.pool.Query(ctx, `
 		SELECT id, status, apk_path, package_name, version, source, sha256,
 		       submitted_at, started_at, completed_at, error, results_path,
-		       jadx_status, apktool_status, mobsf_status, mobsf_report
+		       jadx_status, apktool_status, mobsf_status, mobsf_scan_hash, mobsf_report
 		FROM jobs
 		WHERE status = 'running'`,
 	)
@@ -230,7 +245,7 @@ func (s *Store) ListJobs(ctx context.Context, limit, offset int) ([]Job, error) 
 	rows, err := s.pool.Query(ctx, `
 		SELECT id, status, apk_path, package_name, version, source, sha256,
 		       submitted_at, started_at, completed_at, error, results_path,
-		       jadx_status, apktool_status, mobsf_status, mobsf_report
+		       jadx_status, apktool_status, mobsf_status, mobsf_scan_hash, mobsf_report
 		FROM jobs
 		ORDER BY submitted_at DESC
 		LIMIT $1 OFFSET $2`,
@@ -255,17 +270,20 @@ func (s *Store) ListJobs(ctx context.Context, limit, offset int) ([]Job, error) 
 	return jobs, nil
 }
 
-// ListJobsPendingMobSF returns jobs that are complete (jadx+apktool done) but
-// still have mobsf_status='pending'. This can happen when the coordinator
-// restarts after marking a job complete but before the MobSF goroutine runs.
+// ListJobsPendingMobSF returns jobs that need MobSF attention on startup:
+//   - mobsf_status='pending': goroutine never launched (pod died before start)
+//   - mobsf_status='running': goroutine started but pod died mid-scan
+//
+// Both cases need reconciliation; callers distinguish them via MobSFScanHash.
 func (s *Store) ListJobsPendingMobSF(ctx context.Context) ([]Job, error) {
 	rows, err := s.pool.Query(ctx, `
 		SELECT id, status, apk_path, package_name, version, source, sha256,
 		       submitted_at, started_at, completed_at, error, results_path,
-		       jadx_status, apktool_status, mobsf_status, mobsf_report
+		       jadx_status, apktool_status, mobsf_status, mobsf_scan_hash, mobsf_report
 		FROM jobs
-		WHERE status = 'complete'
-		  AND mobsf_status = 'pending'`,
+		WHERE jadx_status = 'complete'
+		  AND apktool_status = 'complete'
+		  AND mobsf_status IN ('pending', 'running')`,
 	)
 	if err != nil {
 		return nil, fmt.Errorf("list jobs pending mobsf: %w", err)
@@ -290,7 +308,7 @@ func (s *Store) ListJobsPendingMobSF(ctx context.Context) ([]Job, error) {
 // previous report so MobSF can be re-run on an already-complete job.
 func (s *Store) ResetJobMobSF(ctx context.Context, jobID uuid.UUID) error {
 	_, err := s.pool.Exec(ctx, `
-		UPDATE jobs SET mobsf_status = 'pending', mobsf_report = NULL
+		UPDATE jobs SET mobsf_status = 'pending', mobsf_scan_hash = NULL, mobsf_report = NULL
 		WHERE id = $1`,
 		jobID,
 	)
@@ -414,14 +432,18 @@ func (s *Store) GetAPKMetadata(ctx context.Context, jobID uuid.UUID) (*APKMetada
 func scanJob(row pgx.Row) (*Job, error) {
 	var job Job
 	var mobsfReport []byte
+	var mobsfScanHash *string
 
 	err := row.Scan(
 		&job.ID, &job.Status, &job.APKPath, &job.PackageName, &job.Version, &job.Source, &job.SHA256,
 		&job.SubmittedAt, &job.StartedAt, &job.CompletedAt, &job.Error, &job.ResultsPath,
-		&job.JadxStatus, &job.ApktoolStatus, &job.MobSFStatus, &mobsfReport,
+		&job.JadxStatus, &job.ApktoolStatus, &job.MobSFStatus, &mobsfScanHash, &mobsfReport,
 	)
 	if err != nil {
 		return nil, err
+	}
+	if mobsfScanHash != nil {
+		job.MobSFScanHash = *mobsfScanHash
 	}
 	if mobsfReport != nil {
 		job.MobSFReport = json.RawMessage(mobsfReport)

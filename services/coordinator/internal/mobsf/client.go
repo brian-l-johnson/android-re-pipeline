@@ -191,6 +191,20 @@ func (c *Client) tryGetReport(ctx context.Context, scanHash string) (json.RawMes
 	return json.RawMessage(raw), true, nil
 }
 
+// CheckReport fetches the report for scanHash if MobSF already has it,
+// without starting a new scan. Returns (result, true, nil) when found,
+// (nil, false, nil) when not yet available, or (nil, false, err) on error.
+func (c *Client) CheckReport(ctx context.Context, scanHash string) (*ScanResult, bool, error) {
+	report, done, err := c.tryGetReport(ctx, scanHash)
+	if err != nil {
+		return nil, false, err
+	}
+	if !done {
+		return nil, false, nil
+	}
+	return &ScanResult{Report: report}, true, nil
+}
+
 // GetScorecard fetches the MobSF scorecard for scanHash.
 func (c *Client) GetScorecard(ctx context.Context, scanHash string) (json.RawMessage, error) {
 	apiCtx, cancel := context.WithTimeout(ctx, apiTimeout)

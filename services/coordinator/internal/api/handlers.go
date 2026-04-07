@@ -316,13 +316,11 @@ func (h *Handler) handleRetrigger(w http.ResponseWriter, r *http.Request) {
 	}
 
 	toolsFailed := job.JadxStatus == "failed" || job.ApktoolStatus == "failed"
-	// MobSF-only: jadx+apktool done, mobsf not currently running. Covers
-	// failed/pending (recovery) and complete (on-demand re-run). Check this
-	// first — a job can have status='failed' purely because MobSF failed under
-	// the old code, even though the static analysis tools completed fine.
+	// MobSF-only: jadx+apktool done, covers failed/pending/running (stuck)/
+	// complete (on-demand re-run). Check this first — a job can have
+	// status='failed' purely because MobSF failed under the old code.
 	mobsfRetrigger := !toolsFailed &&
-		job.JadxStatus == "complete" && job.ApktoolStatus == "complete" &&
-		job.MobSFStatus != "running"
+		job.JadxStatus == "complete" && job.ApktoolStatus == "complete"
 
 	switch {
 	case mobsfRetrigger:

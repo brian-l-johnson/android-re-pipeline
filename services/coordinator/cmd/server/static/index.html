@@ -367,10 +367,11 @@
                                 ${ (() => {
                                   const toolsFailed = j.jadx_status === 'failed' || j.apktool_status === 'failed';
                                   const mobsfAvail = !toolsFailed &&
-                                    j.jadx_status === 'complete' && j.apktool_status === 'complete' &&
-                                    j.mobsf_status !== 'running';
+                                    j.jadx_status === 'complete' && j.apktool_status === 'complete';
                                   if (mobsfAvail) {
-                                    const label = j.mobsf_status === 'complete' ? '↺ Re-run MobSF' : '↺ Retrigger MobSF';
+                                    const label = j.mobsf_status === 'complete' ? '↺ Re-run MobSF'
+                                      : j.mobsf_status === 'running' ? '↺ Reset MobSF'
+                                      : '↺ Retrigger MobSF';
                                     return `<button class="retrigger-btn mobsf"
                                       onclick="this.getRootNode().host._retrigger(event, '${j.job_id}')">
                                       ${label}
