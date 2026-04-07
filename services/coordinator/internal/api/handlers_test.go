@@ -286,11 +286,18 @@ func TestHandleHealth(t *testing.T) {
 	if rec.Code != http.StatusOK {
 		t.Errorf("status = %d, want 200", rec.Code)
 	}
-	var resp map[string]string
+	var resp map[string]interface{}
 	if err := json.NewDecoder(rec.Body).Decode(&resp); err != nil {
 		t.Fatalf("decoding response: %v", err)
 	}
 	if resp["status"] != "ok" {
 		t.Errorf("status = %q, want %q", resp["status"], "ok")
+	}
+	mem, ok := resp["mem"].(map[string]interface{})
+	if !ok {
+		t.Fatal("expected mem object in health response")
+	}
+	if _, ok := mem["heap_alloc_mb"]; !ok {
+		t.Error("expected heap_alloc_mb in mem stats")
 	}
 }
