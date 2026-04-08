@@ -193,6 +193,48 @@ Response:
 
 ---
 
+## Recommended Approach: Download First
+
+For any meaningful analysis, **download the archive first** and work locally
+rather than making repeated API calls to read individual files. The API file
+and search endpoints are useful for quick one-off lookups, but local tools are
+faster, have no result caps, and cover all file types.
+
+```bash
+# Download and extract into a working directory
+JOB_ID="<uuid>"
+curl -L -o /tmp/apk-results.zip \
+  "https://coordinator.apps.blj.wtf/results/$JOB_ID/download?format=zip"
+unzip -q /tmp/apk-results.zip -d /tmp/apk-$JOB_ID
+cd /tmp/apk-$JOB_ID
+```
+
+Then use local tools for all subsequent analysis:
+
+```bash
+# Search across everything — no type restrictions, no result caps
+grep -r "api.example.com" .
+grep -rn "Bearer\|api_key\|secret\|password" . --include="*.java"
+
+# Find all network-related classes
+find . -name "*.java" | xargs grep -l "OkHttp\|Retrofit\|HttpURLConnection"
+
+# Scan for hardcoded URLs
+grep -roh 'https\?://[^"'\'']\+' . | sort -u
+
+# Extract all strings from native libs
+find apktool/lib -name "*.so" -exec strings {} \; | grep -i "api\|key\|token"
+
+# Count obfuscation level (short class names indicate ProGuard)
+find jadx/sources -name "*.java" | awk -F/ '{print $NF}' | \
+  awk -F. '{print length($1)}' | sort -n | head -20
+```
+
+Only fall back to the API search/file endpoints when you need a quick check
+without downloading, or when the archive is too large to fetch in full.
+
+---
+
 ## Common Analysis Workflows
 
 ### Find API endpoints
